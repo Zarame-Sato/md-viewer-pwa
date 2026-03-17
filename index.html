@@ -606,6 +606,10 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             編集
           </button>
+          <button class="btn btn-primary" onclick="saveToDrive()" id="btn-save-drive" style="font-size:12px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
+            保存
+          </button>
           <button class="btn btn-success" onclick="pushToGitHub()" id="btn-push" style="font-size:12px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
             Commit&Push
@@ -832,7 +836,8 @@
 
       // OAuth2 Implicit Flow（リダイレクトなし、ポップアップ使用）
       const redirectUri = window.location.origin + window.location.pathname;
-      const scope = 'https://www.googleapis.com/auth/drive.readonly';
+      // drive.file: このアプリで開いた／作成したファイルの読み書き許可
+      const scope = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly';
       const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' +
         'client_id=' + encodeURIComponent(clientId) +
         '&redirect_uri=' + encodeURIComponent(redirectUri) +
@@ -946,38 +951,46 @@
     }
 
     // ============================================================
-    // Google Drive: 指定フォルダ配下の md/pdf を再帰取得
-    // Google Drive API は再帰検索できないので、フォルダを幅優先で辿る
+    // Google Drive: 指定フォルダ配下の md/pdf を再帰取得（並列版）
+    // 1フォルダずつ直列 → 最大5フォルダ同時に並列でAPI呼び出し
     // ============================================================
+    async function fetchFolderContents(folder) {
+      // 1つのフォルダの直下のファイル・サブフォルダを全ページ取得
+      const items = [];
+      let pageToken = null;
+      do {
+        let url = 'https://www.googleapis.com/drive/v3/files?' +
+          'q=' + encodeURIComponent("'" + folder.id + "' in parents and trashed=false") +
+          '&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size)' +
+          '&pageSize=200';
+        if (pageToken) url += '&pageToken=' + pageToken;
+        const res = await fetch(url, { headers: { Authorization: 'Bearer ' + state.gdriveToken } });
+        if (!res.ok) break;
+        const data = await res.json();
+        items.push(...(data.files || []));
+        pageToken = data.nextPageToken || null;
+      } while (pageToken);
+      return { folder, items };
+    }
+
     async function listFilesInFolder(folderId, folderName) {
       const allFiles = [];
-      // 幅優先探索: [{ id, pathPrefix }]
-      const queue = [{ id: folderId, pathPrefix: folderName }];
+      let queue = [{ id: folderId, pathPrefix: folderName }];
+      const PARALLEL = 5; // 同時にAPIを叩くフォルダ数
 
       while (queue.length > 0) {
-        const current = queue.shift();
-        let pageToken = null;
+        // キューから最大 PARALLEL 個を取り出して同時に処理
+        const batch = queue.splice(0, PARALLEL);
+        const results = await Promise.all(batch.map(f => fetchFolderContents(f)));
 
-        do {
-          // このフォルダの直下を取得（ファイル + サブフォルダ両方）
-          let url = 'https://www.googleapis.com/drive/v3/files?' +
-            'q=' + encodeURIComponent("'" + current.id + "' in parents and trashed=false") +
-            '&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size)' +
-            '&pageSize=100';
-          if (pageToken) url += '&pageToken=' + pageToken;
-
-          const res = await fetch(url, { headers: { Authorization: 'Bearer ' + state.gdriveToken } });
-          if (!res.ok) break;
-          const data = await res.json();
-
-          for (const f of (data.files || [])) {
+        for (const { folder, items } of results) {
+          for (const f of items) {
             if (f.mimeType === 'application/vnd.google-apps.folder') {
-              // サブフォルダ → キューに追加して掘り続ける
-              const subPath = current.pathPrefix ? current.pathPrefix + '/' + f.name : f.name;
+              const subPath = folder.pathPrefix ? folder.pathPrefix + '/' + f.name : f.name;
               queue.push({ id: f.id, pathPrefix: subPath });
             } else if (f.name.endsWith('.md') || f.name.endsWith('.pdf') ||
                        f.mimeType === 'text/markdown' || f.mimeType === 'application/pdf') {
-              const filePath = current.pathPrefix ? current.pathPrefix + '/' + f.name : f.name;
+              const filePath = folder.pathPrefix ? folder.pathPrefix + '/' + f.name : f.name;
               allFiles.push({
                 id: f.id,
                 name: f.name,
@@ -988,76 +1001,119 @@
               });
             }
           }
-          pageToken = data.nextPageToken || null;
-        } while (pageToken);
+        }
       }
-
       return allFiles;
     }
 
     // ============================================================
-    // Google Drive ファイル一覧取得（マッピング連動版）
-    // マッピングがあれば → そのフォルダだけ検索（高速）
-    // マッピングなければ → 従来どおり全検索
+    // ファイル一覧キャッシュ（localStorage）
+    // 2回目以降の起動はキャッシュから瞬時に表示し、
+    // バックグラウンドで最新を取得して差分更新する
+    // ============================================================
+    const FILE_CACHE_KEY = 'mdviewer_file_cache';
+
+    function saveFileCache(files) {
+      try {
+        localStorage.setItem(FILE_CACHE_KEY, JSON.stringify({
+          timestamp: Date.now(),
+          files: files
+        }));
+      } catch (e) { /* localStorage 容量超過時は無視 */ }
+    }
+
+    function loadFileCache() {
+      try {
+        const raw = localStorage.getItem(FILE_CACHE_KEY);
+        if (!raw) return null;
+        const cache = JSON.parse(raw);
+        // 24時間以上古いキャッシュは無視
+        if (Date.now() - cache.timestamp > 24 * 60 * 60 * 1000) return null;
+        return cache.files || null;
+      } catch (e) { return null; }
+    }
+
+    // ============================================================
+    // Google Drive ファイル一覧取得（キャッシュ＋並列BFS版）
+    // ① キャッシュがあれば即表示
+    // ② バックグラウンドで最新を取得 → 差分更新
     // ============================================================
     async function loadGdriveFiles() {
       if (!state.gdriveToken) return;
 
-      const mappingFolders = Object.keys(state.repoMappings);
-
-      try {
-        let driveFiles = [];
-
-        if (mappingFolders.length > 0) {
-          // マッピング済みフォルダだけを対象に検索（高速）
-          for (const folderName of mappingFolders) {
-            const folderId = await findDriveFolderIdByName(folderName, state.gdriveFolderId || null);
-            if (!folderId) {
-              showToast('Drive フォルダ「' + folderName + '」が見つかりません', 'warning');
-              continue;
-            }
-            const files = await listFilesInFolder(folderId, folderName);
-            driveFiles = driveFiles.concat(files);
+      // ① キャッシュがあれば先に表示（瞬時）
+      const cached = loadFileCache();
+      if (cached && cached.length > 0) {
+        state.files = cached;
+        renderFileList();
+        // バックグラウンドで最新取得（スピナーなし）
+        fetchLatestDriveFiles().then(freshFiles => {
+          if (freshFiles && freshFiles.length > 0) {
+            state.files = freshFiles;
+            saveFileCache(freshFiles);
+            renderFileList();
           }
-        } else if (state.gdriveFolderId) {
-          // マッピング未設定だがルートフォルダ指定あり
-          // → BFS でフォルダ構造ごと取得（ディレクトリ構造を保持）
-          driveFiles = await listFilesInFolder(state.gdriveFolderId, '');
-        } else {
-          // ルートフォルダも未設定 → Drive 全体からフラット検索
-          const query = "mimeType='text/markdown' or fileExtension='md' or mimeType='application/pdf' or fileExtension='pdf'";
-          const res = await fetch(
-            'https://www.googleapis.com/drive/v3/files?' +
-            'q=' + encodeURIComponent(query) +
-            '&fields=files(id,name,modifiedTime,size,parents)' +
-            '&orderBy=modifiedTime desc' +
-            '&pageSize=200',
-            { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
-          );
-          if (!res.ok) throw new Error('Drive API エラー: ' + res.status);
-          const data = await res.json();
-          driveFiles = (data.files || []).map(f => ({
-            id: f.id,
-            name: f.name,
-            drivePath: f.name,
-            modifiedTime: f.modifiedTime,
-            size: f.size,
-            source: 'gdrive'
-          }));
-        }
-        // 更新日時で降順ソート
-        driveFiles.sort((a, b) => (b.modifiedTime || '').localeCompare(a.modifiedTime || ''));
+        }).catch(() => {});
+        return;
+      }
 
-        state.files = [
-          ...driveFiles,
-          ...state.files.filter(f => f.source === 'github')
-        ];
+      // ② キャッシュなし → 通常の取得（スピナー表示中）
+      try {
+        const files = await fetchLatestDriveFiles();
+        if (files) {
+          state.files = files;
+          saveFileCache(files);
+        }
         renderFileList();
       } catch (err) {
         showToast('ファイル一覧の取得に失敗: ' + err.message, 'error');
-        // エラー時もスピナーを止めて空状態を表示
         renderFileList();
       }
+    }
+
+    // 実際の Drive API 呼び出し（キャッシュとは独立）
+    async function fetchLatestDriveFiles() {
+      const mappingFolders = Object.keys(state.repoMappings);
+      let driveFiles = [];
+
+      if (mappingFolders.length > 0) {
+        // マッピング済みフォルダだけを対象に検索
+        const folderPromises = mappingFolders.map(async (folderName) => {
+          const folderId = await findDriveFolderIdByName(folderName, state.gdriveFolderId || null);
+          if (!folderId) return [];
+          return await listFilesInFolder(folderId, folderName);
+        });
+        const results = await Promise.all(folderPromises);
+        driveFiles = results.flat();
+      } else if (state.gdriveFolderId) {
+        // マッピング未設定だがルートフォルダ指定あり → BFS で階層取得
+        driveFiles = await listFilesInFolder(state.gdriveFolderId, '');
+      } else {
+        // ルートフォルダも未設定 → Drive 全体からフラット検索
+        const query = "mimeType='text/markdown' or fileExtension='md' or mimeType='application/pdf' or fileExtension='pdf'";
+        const res = await fetch(
+          'https://www.googleapis.com/drive/v3/files?' +
+          'q=' + encodeURIComponent(query) +
+          '&fields=files(id,name,modifiedTime,size,parents)' +
+          '&orderBy=modifiedTime desc' +
+          '&pageSize=200',
+          { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+        );
+        if (!res.ok) throw new Error('Drive API エラー: ' + res.status);
+        const data = await res.json();
+        driveFiles = (data.files || []).map(f => ({
+          id: f.id,
+          name: f.name,
+          drivePath: f.name,
+          modifiedTime: f.modifiedTime,
+          size: f.size,
+          source: 'gdrive'
+        }));
+      }
+
+      // 更新日時で降順ソート
+      driveFiles.sort((a, b) => (b.modifiedTime || '').localeCompare(a.modifiedTime || ''));
+      return driveFiles;
     }
 
     // ============================================================
@@ -1340,6 +1396,75 @@
     }
 
     // ============================================================
+    // Google Drive にファイルを上書き保存
+    // Drive API v3 の files.update（PATCH）で内容を更新する
+    // ============================================================
+    async function saveToDrive() {
+      if (!state.currentFile || !state.gdriveToken) {
+        showToast('保存先が見つかりません。Drive に再接続してください', 'error');
+        return;
+      }
+
+      // 編集中なら最新のエディタ内容を取得
+      if (state.isEditing) {
+        state.currentContent = document.getElementById('editor-content').value;
+      }
+
+      // 確認ダイアログ
+      const fileName = state.currentFile.name;
+      if (!confirm('「' + fileName + '」を Google Drive に上書き保存しますか？\n\n※ 元のファイルが書き換わります')) {
+        return;
+      }
+
+      const btn = document.getElementById('btn-save-drive');
+      btn.disabled = true;
+      btn.textContent = '保存中...';
+
+      try {
+        const fileId = state.currentFile.id;
+        const content = state.currentContent;
+
+        // Drive API v3: multipart upload で内容を更新
+        // メタデータ部（空でOK）+ メディア部（ファイル内容）
+        const boundary = '----MDViewerBoundary' + Date.now();
+        const metadata = JSON.stringify({ mimeType: 'text/markdown' });
+
+        const body =
+          '--' + boundary + '\r\n' +
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+          metadata + '\r\n' +
+          '--' + boundary + '\r\n' +
+          'Content-Type: text/markdown; charset=UTF-8\r\n\r\n' +
+          content + '\r\n' +
+          '--' + boundary + '--';
+
+        const res = await fetch(
+          'https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=multipart',
+          {
+            method: 'PATCH',
+            headers: {
+              'Authorization': 'Bearer ' + state.gdriveToken,
+              'Content-Type': 'multipart/related; boundary=' + boundary
+            },
+            body: body
+          }
+        );
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error((errData.error && errData.error.message) || 'HTTP ' + res.status);
+        }
+
+        showToast('Google Drive に保存しました', 'success');
+      } catch (err) {
+        showToast('Drive 保存エラー: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>保存';
+      }
+    }
+
+    // ============================================================
     // GitHub に push（commit & push）
     // drivePath を解析して、対象リポジトリとパスを自動判定する
     // ============================================================
@@ -1613,6 +1738,7 @@
         // PDF ファイルの場合は専用レンダラーで表示
         if (file.name.endsWith('.pdf')) {
           document.getElementById('btn-edit').style.display = 'none';
+          document.getElementById('btn-save-drive').style.display = 'none';
           let pdfData;
           if (gapiReady && gapi.client) {
             gapi.client.setToken({ access_token: state.gdriveToken });
@@ -1640,6 +1766,7 @@
 
         // 通常の Markdown ファイル（Google Drive から取得）
         document.getElementById('btn-edit').style.display = '';
+        document.getElementById('btn-save-drive').style.display = '';
         const content = await loadGdriveFileContent(file.id);
         state.currentContent = content;
         renderMarkdown(content);
@@ -1834,10 +1961,23 @@
     function refreshFiles() {
       state.files = [];
       state.currentPath = '';  // フォルダ位置をルートに戻す
+      // 手動リフレッシュ → キャッシュを消して強制再取得
+      localStorage.removeItem(FILE_CACHE_KEY);
       document.getElementById('file-list').innerHTML = '<div class="loading"><div class="spinner"></div>更新中...</div>';
       document.getElementById('breadcrumb').style.display = 'none';
-      if (state.gdriveToken) loadGdriveFiles();
-      if (!state.gdriveToken && !state.githubToken) {
+      if (state.gdriveToken) {
+        // スピナー付きで最新取得
+        fetchLatestDriveFiles().then(files => {
+          if (files) {
+            state.files = files;
+            saveFileCache(files);
+          }
+          renderFileList();
+        }).catch(err => {
+          showToast('更新失敗: ' + err.message, 'error');
+          renderFileList();
+        });
+      } else {
         renderFileList();
       }
     }
