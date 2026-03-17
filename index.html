@@ -846,10 +846,6 @@
       if (!state.gdriveToken) return;
 
       let query = "mimeType='text/markdown' or fileExtension='md' or mimeType='application/pdf' or fileExtension='pdf'";
-      if (state.gdriveFolderId) {
-        // フォルダ配下を再帰検索するため、直接の親指定ではなく全体検索してパスで判別
-        // ただし Google Drive API は再帰検索非対応なので、フォルダ指定なしで全検索し後でフィルタ
-      }
 
       try {
         const res = await fetch(
@@ -863,28 +859,40 @@
         if (!res.ok) throw new Error('Drive API エラー: ' + res.status);
         const data = await res.json();
 
-        // 各ファイルのフルパスを構築
-        const driveFiles = [];
-        for (const f of (data.files || [])) {
-          const drivePath = await buildDrivePath(f.name, f.parents);
-          driveFiles.push({
-            id: f.id,
-            name: f.name,
-            drivePath: drivePath,  // "article/カテゴリA/memo.md"
-            modifiedTime: f.modifiedTime,
-            size: f.size,
-            source: 'gdrive'
-          });
-        }
+        // まずファイル名だけで一覧を即表示（パスは後から付ける）
+        const driveFiles = (data.files || []).map(f => ({
+          id: f.id,
+          name: f.name,
+          drivePath: f.name,  // 暫定: ファイル名のみ
+          _parents: f.parents, // パス解決用に一時保持
+          modifiedTime: f.modifiedTime,
+          size: f.size,
+          source: 'gdrive'
+        }));
 
-        // gdriveFolderId が指定されている場合、そのフォルダ配下のみ残す
-        // （パス構築で stopId で止まるので、パスの先頭がフォルダ名でないものは除外不要）
-
-        // 既存の github ファイルとマージ
+        // 即座に一覧表示（パスなし状態）
         state.files = [
           ...driveFiles,
           ...state.files.filter(f => f.source === 'github')
         ];
+        renderFileList();
+
+        // バックグラウンドでパスを並列解決（5件ずつバッチ処理）
+        const BATCH = 5;
+        for (let i = 0; i < driveFiles.length; i += BATCH) {
+          const batch = driveFiles.slice(i, i + BATCH);
+          await Promise.all(batch.map(async (f) => {
+            try {
+              f.drivePath = await buildDrivePath(f.name, f._parents);
+            } catch (e) {
+              // パス解決失敗時はファイル名のまま
+            }
+          }));
+        }
+        // _parents を除去
+        driveFiles.forEach(f => delete f._parents);
+
+        // パス付きで再描画
         renderFileList();
       } catch (err) {
         showToast('ファイル一覧の取得に失敗: ' + err.message, 'error');
