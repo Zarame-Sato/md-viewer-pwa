@@ -1,12 +1,11 @@
 {
-  "name": "MD Viewer - Markdown Reader & GitHub Sync",
+  "name": "MD Viewer",
   "short_name": "MD Viewer",
-  "description": "Google Drive の Markdown を美しく表示し、GitHub に push できる PWA",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#3b82f6",
-  "orientation": "any",
+  "orientation": "portrait-primary",
   "icons": [
     {
       "src": "./icons/icon-192x192.png",
