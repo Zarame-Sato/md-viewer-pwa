@@ -549,9 +549,9 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             編集
           </button>
-          <button class="btn btn-success" onclick="pushToGitHub()" id="btn-push">
+          <button class="btn btn-success" onclick="pushToGitHub()" id="btn-push" style="font-size:12px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
-            Push
+            Commit&Push
           </button>
         </div>
         <div class="tab-bar" id="edit-tabs" style="display:none;">
@@ -695,13 +695,11 @@
         githubBranch: state.githubBranch,
         repoMappings: state.repoMappings
       };
-      // トークン保存チェックボックスが ON なら PAT を保存
+      // トークン保存チェックボックスが ON ならトークン類を保存
       const saveTokenEl = document.getElementById('github-save-token');
-      if (saveTokenEl && saveTokenEl.checked && state.githubToken) {
-        data.githubToken = state.githubToken;
-      } else {
-        // チェックを外したら保存済みトークンも消す
-        delete data.githubToken;
+      if (saveTokenEl && saveTokenEl.checked) {
+        if (state.githubToken) data.githubToken = state.githubToken;
+        if (state.gdriveToken) data.gdriveToken = state.gdriveToken;
       }
       localStorage.setItem('mdviewer_settings', JSON.stringify(data));
     }
@@ -718,11 +716,18 @@
         const branchEl = document.getElementById('github-branch');
         if (branchEl) branchEl.value = savedSettings.githubBranch;
       }
-      // 保存済み PAT があればフォームに復元 & チェックを ON に
+      // 保存済みトークンがあれば復元 & チェックを ON に
       if (savedSettings.githubToken) {
         document.getElementById('github-token').value = savedSettings.githubToken;
         document.getElementById('github-save-token').checked = true;
         state.githubToken = savedSettings.githubToken;
+      }
+      if (savedSettings.gdriveToken) {
+        document.getElementById('github-save-token').checked = true;
+        state.gdriveToken = savedSettings.gdriveToken;
+        updateGdriveStatus(true);
+        // Drive トークン復元 → 自動でファイル一覧取得
+        loadGdriveFiles();
       }
     })();
 
@@ -798,6 +803,7 @@
             popup.close();
             updateGdriveStatus(true);
             showToast('Google Drive に接続しました', 'success');
+            saveSettings();  // トークン保存（チェック ON なら）
             loadGdriveFiles();
           }
         } catch (e) {
@@ -1180,7 +1186,6 @@
       updateGithubStatus(true);
       saveSettings();
       showToast(validCount + ' 件のマッピングを保存しました', 'success');
-      loadGithubFiles();
     }
 
     function updateGithubStatus(connected) {
@@ -1195,77 +1200,9 @@
     }
 
     // ============================================================
-    // GitHub ファイル一覧取得（複数リポジトリ対応）
-    // マッピングされた全リポジトリから再帰的にファイルを取得
+    // ※ ファイル一覧は Google Drive のみ表示
+    //    GitHub はプッシュ先として使うだけ（一覧表示不要）
     // ============================================================
-    async function loadGithubFiles() {
-      if (!state.githubToken || Object.keys(state.repoMappings).length === 0) return;
-
-      // リポジトリ内のフォルダを再帰的に探索して md/pdf を収集
-      async function fetchTree(repo, treeSha) {
-        const res = await fetch(
-          'https://api.github.com/repos/' + repo + '/git/trees/' + treeSha + '?recursive=1',
-          { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
-        );
-        if (!res.ok) return [];
-        const data = await res.json();
-        return (data.tree || [])
-          .filter(item => item.type === 'blob' && (item.path.endsWith('.md') || item.path.endsWith('.pdf')))
-          .map(item => ({
-            id: item.sha,
-            name: item.path.split('/').pop(),
-            path: item.path,
-            sha: item.sha,
-            download_url: 'https://raw.githubusercontent.com/' + repo + '/' + state.githubBranch + '/' + item.path,
-            source: 'github',
-            githubRepo: repo
-          }));
-      }
-
-      try {
-        let allGhFiles = [];
-        for (const [folder, repo] of Object.entries(state.repoMappings)) {
-          try {
-            // ブランチの先頭コミットの tree SHA を取得
-            const branchRes = await fetch(
-              'https://api.github.com/repos/' + repo + '/branches/' + state.githubBranch,
-              { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
-            );
-            if (!branchRes.ok) continue;
-            const branchData = await branchRes.json();
-            const treeSha = branchData.commit.commit.tree.sha;
-
-            const files = await fetchTree(repo, treeSha);
-            allGhFiles = allGhFiles.concat(files);
-          } catch (e) {
-            console.warn(repo + ' のファイル取得に失敗:', e);
-          }
-        }
-
-        // 既存の gdrive ファイルとマージ
-        state.files = [
-          ...state.files.filter(f => f.source === 'gdrive'),
-          ...allGhFiles
-        ];
-        renderFileList();
-      } catch (err) {
-        showToast('GitHub ファイル一覧エラー: ' + err.message, 'error');
-      }
-    }
-
-    // ============================================================
-    // GitHub ファイル内容取得
-    // ============================================================
-    async function loadGithubFileContent(file) {
-      // Private リポジトリは raw.githubusercontent.com でも認証が必要
-      const headers = {};
-      if (state.githubToken) {
-        headers['Authorization'] = 'token ' + state.githubToken;
-      }
-      const res = await fetch(file.download_url, { headers });
-      if (!res.ok) throw new Error('GitHub ファイル読み込みエラー: ' + res.status);
-      return await res.text();
-    }
 
     // ============================================================
     // drivePath からリポジトリと相対パスを自動判定する
@@ -1319,7 +1256,7 @@
 
       const btn = document.getElementById('btn-push');
       btn.disabled = true;
-      btn.textContent = 'Push 中...';
+      btn.textContent = 'Commit&Push 中...';
 
       // 安全策: push 前にリポジトリが Private であることを再確認
       try {
@@ -1332,7 +1269,7 @@
           if (!info.private) {
             showToast('Public リポジトリへの push はブロックされました', 'error');
             btn.disabled = false;
-            btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>Push';
+            btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>Commit&amp;Push';
             return;
           }
         }
@@ -1387,7 +1324,7 @@
         showToast('Push 失敗: ' + err.message, 'error');
       } finally {
         btn.disabled = false;
-        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>Push';
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>Commit&amp;Push';
       }
     }
 
@@ -1407,16 +1344,16 @@
         container.innerHTML = `
           <div class="empty-state">
             <div class="icon">📄</div>
-            <p>${state.gdriveToken || state.githubToken
+            <p>${state.gdriveToken
               ? '.md ファイルが見つかりません'
-              : '設定画面から Google Drive と GitHub を接続してください'}</p>
+              : '設定画面から Google Drive に接続してください'}</p>
           </div>`;
         return;
       }
 
       container.innerHTML = files.map((f, i) => {
-        const sourceIcon = f.source === 'gdrive' ? '📁' : '🐙';
-        const sourceLabel = f.source === 'gdrive' ? 'Google Drive' : 'GitHub';
+        const sourceIcon = '📁';
+        const sourceLabel = 'Google Drive';
         const date = f.modifiedTime
           ? new Date(f.modifiedTime).toLocaleDateString('ja-JP')
           : '';
@@ -1458,35 +1395,27 @@
       showPage('viewer');
 
       try {
+        // トークン切れチェック
+        if (!state.gdriveToken) {
+          throw new Error('Google Drive に再接続してください（設定画面へ）');
+        }
+
         // PDF ファイルの場合は専用レンダラーで表示
         if (file.name.endsWith('.pdf')) {
-          // PDF は編集ボタンを非表示
           document.getElementById('btn-edit').style.display = 'none';
-          let pdfData;
-          if (file.source === 'gdrive') {
-            const res = await fetch(
-              'https://www.googleapis.com/drive/v3/files/' + file.id + '?alt=media',
-              { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
-            );
-            if (!res.ok) throw new Error('PDF 読み込みエラー: ' + res.status);
-            pdfData = await res.arrayBuffer();
-          } else {
-            const res = await fetch(file.download_url);
-            if (!res.ok) throw new Error('PDF 読み込みエラー');
-            pdfData = await res.arrayBuffer();
-          }
+          const res = await fetch(
+            'https://www.googleapis.com/drive/v3/files/' + file.id + '?alt=media',
+            { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+          );
+          if (!res.ok) throw new Error('PDF 読み込みエラー: ' + res.status);
+          const pdfData = await res.arrayBuffer();
           await renderPdf(pdfData);
           return;
         }
 
-        // 通常の Markdown ファイル
+        // 通常の Markdown ファイル（Google Drive から取得）
         document.getElementById('btn-edit').style.display = '';
-        let content;
-        if (file.source === 'gdrive') {
-          content = await loadGdriveFileContent(file.id);
-        } else {
-          content = await loadGithubFileContent(file);
-        }
+        const content = await loadGdriveFileContent(file.id);
         state.currentContent = content;
         renderMarkdown(content);
       } catch (err) {
@@ -1681,7 +1610,6 @@
       state.files = [];
       document.getElementById('file-list').innerHTML = '<div class="loading"><div class="spinner"></div>更新中...</div>';
       if (state.gdriveToken) loadGdriveFiles();
-      if (state.githubToken && Object.keys(state.repoMappings).length > 0) loadGithubFiles();
       if (!state.gdriveToken && !state.githubToken) {
         renderFileList();
       }
