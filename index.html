@@ -627,27 +627,11 @@
       <div id="page-settings" class="page">
         <h2 style="font-size:20px; margin-bottom:20px;">設定</h2>
 
-        <!-- Google Drive 設定 -->
-        <div class="settings-section">
-          <h3>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 19.5h20L12 2z"/></svg>
-            Google Drive
-            <span id="gdrive-status" class="status-badge disconnected" style="margin-left:auto;">
-              <span class="status-dot"></span>未接続
-            </span>
-          </h3>
-          <label>Client ID <span style="font-size:11px;color:var(--text-muted);">（設定済み・変更不要）</span></label>
-          <input type="text" id="gdrive-client-id" value="975677173358-i3rdoqc0je229uobr9cqq1sb63ett2pp.apps.googleusercontent.com" style="font-size:12px;color:var(--text-muted);">
-          <label>フォルダID <span style="font-size:11px;color:var(--text-muted);">（空欄＝Google Drive 全体から検索）</span></label>
-          <input type="text" id="gdrive-folder-id" placeholder="省略するとルートフォルダを検索">
-          <button class="btn btn-primary" onclick="connectGoogleDrive()" id="btn-gdrive-connect">Google Drive に接続</button>
-        </div>
-
-        <!-- GitHub 設定 -->
+        <!-- ① GitHub 設定（先に設定する） -->
         <div class="settings-section">
           <h3>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
-            GitHub
+            ① GitHub
             <span id="github-status" class="status-badge disconnected" style="margin-left:auto;">
               <span class="status-dot"></span>未接続
             </span>
@@ -681,6 +665,22 @@
               <button class="btn btn-primary" onclick="connectGitHub()">接続する</button>
             </div>
           </div>
+        </div>
+
+        <!-- ② Google Drive 設定（GitHub マッピング後に設定する） -->
+        <div class="settings-section">
+          <h3>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 19.5h20L12 2z"/></svg>
+            ② Google Drive
+            <span id="gdrive-status" class="status-badge disconnected" style="margin-left:auto;">
+              <span class="status-dot"></span>未接続
+            </span>
+          </h3>
+          <label>Client ID <span style="font-size:11px;color:var(--text-muted);">（設定済み・変更不要）</span></label>
+          <input type="text" id="gdrive-client-id" value="975677173358-i3rdoqc0je229uobr9cqq1sb63ett2pp.apps.googleusercontent.com" style="font-size:12px;color:var(--text-muted);">
+          <label>フォルダID <span style="font-size:11px;color:var(--text-muted);">（空欄＝Google Drive 全体から検索）</span></label>
+          <input type="text" id="gdrive-folder-id" placeholder="省略するとルートフォルダを検索">
+          <button class="btn btn-primary" onclick="connectGoogleDrive()" id="btn-gdrive-connect">Google Drive に接続</button>
         </div>
 
         <!-- データ管理 -->
@@ -971,8 +971,12 @@
 
     function saveFileCache(files) {
       try {
+        // マッピング情報もキャッシュに含める（変更検知用）
+        const mappingKey = JSON.stringify(Object.keys(state.repoMappings).sort());
         localStorage.setItem(FILE_CACHE_KEY, JSON.stringify({
           timestamp: Date.now(),
+          mappingKey: mappingKey,
+          rootId: state.gdriveFolderId || '',
           files: files
         }));
       } catch (e) { /* localStorage 容量超過時は無視 */ }
@@ -983,7 +987,13 @@
         const raw = localStorage.getItem(FILE_CACHE_KEY);
         if (!raw) return null;
         const cache = JSON.parse(raw);
+        // 24時間以上古い → 無効
         if (Date.now() - cache.timestamp > 24 * 60 * 60 * 1000) return null;
+        // マッピングが変わった → 無効（古いフィルタのデータは使わない）
+        const currentMappingKey = JSON.stringify(Object.keys(state.repoMappings).sort());
+        if (cache.mappingKey !== currentMappingKey) return null;
+        // ルートフォルダが変わった → 無効
+        if ((cache.rootId || '') !== (state.gdriveFolderId || '')) return null;
         return cache.files || null;
       } catch (e) { return null; }
     }
@@ -993,6 +1003,13 @@
     // ============================================================
     async function loadGdriveFiles() {
       if (!state.gdriveToken) return;
+
+      // マッピング未設定 → ファイルを読まない（全表示防止）
+      if (Object.keys(state.repoMappings).length === 0) {
+        state.files = [];
+        renderFileList();
+        return;
+      }
 
       // ① キャッシュがあれば先に表示（瞬時）
       const cached = loadFileCache();
@@ -1073,20 +1090,8 @@
 
       // ── あるファイルが許可フォルダ配下かを判定するヘルパー ──
       function isFileAllowed(parentId) {
-        // マッピングなし → ルートフォルダ配下なら全部OK
-        if (mappingFolderNames.length === 0) {
-          if (!rootId) return true; // 何も指定なし → 全ファイル表示
-          // ルートフォルダ配下かチェック
-          let current = parentId;
-          let safety = 20;
-          while (current && safety-- > 0) {
-            if (current === rootId) return true;
-            const folder = folderMap.get(current);
-            if (!folder) break;
-            current = folder.parentId;
-          }
-          return false;
-        }
+        // マッピングなし → ここに来ることはないが安全のため拒否
+        if (mappingFolderNames.length === 0) return false;
 
         // マッピングあり → 許可フォルダのどれかの配下かチェック
         let current = parentId;
@@ -1670,7 +1675,11 @@
 
       if (files.length === 0) {
         container.innerHTML = '<div class="empty-state"><div class="icon">📄</div><p>' +
-          (state.gdriveToken ? '.md ファイルが見つかりません' : '設定画面から Google Drive に接続してください') +
+          (!state.gdriveToken
+            ? '設定画面から GitHub → Google Drive の順に接続してください'
+            : Object.keys(state.repoMappings).length === 0
+              ? '先に設定画面で GitHub リポジトリのマッピングを設定してください'
+              : '.md ファイルが見つかりません') +
           '</p></div>';
         return;
       }
