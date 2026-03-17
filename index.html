@@ -550,11 +550,19 @@
               <span class="status-dot"></span>未接続
             </span>
           </h3>
+<<<<<<< HEAD
           <label>Client ID <span style="font-size:11px;color:var(--text-muted);">（設定済み・変更不要）</span></label>
           <input type="text" id="gdrive-client-id" value="975677173358-i3rdoqc0je229uobr9cqq1sb63ett2pp.apps.googleusercontent.com" style="font-size:12px;color:var(--text-muted);">
           <label>フォルダID <span style="font-size:11px;color:var(--text-muted);">（空欄＝Google Drive 全体から検索）</span></label>
           <input type="text" id="gdrive-folder-id" placeholder="省略するとルートフォルダを検索">
           <button class="btn btn-primary" onclick="connectGoogleDrive()" id="btn-gdrive-connect">Google Drive に接続</button>
+=======
+          <label>Client ID（Google Cloud Console で発行）</label>
+          <input type="text" id="gdrive-client-id" placeholder="xxxxx.apps.googleusercontent.com">
+          <label>フォルダID（Google Drive の URL から取得）</label>
+          <input type="text" id="gdrive-folder-id" placeholder="省略するとルートフォルダを検索">
+          <button class="btn btn-primary" onclick="connectGoogleDrive()" id="btn-gdrive-connect">接続する</button>
+>>>>>>> 2a69c0701a3806828d071710064568f419d163a7
         </div>
 
         <!-- GitHub 設定 -->
@@ -566,17 +574,27 @@
               <span class="status-dot"></span>未接続
             </span>
           </h3>
+<<<<<<< HEAD
           <form id="github-pat-form" onsubmit="event.preventDefault(); fetchGithubRepos();" autocomplete="on">
             <label>Personal Access Token <span style="font-size:11px;color:var(--text-muted);">（GitHub で発行した ghp_ で始まるトークン）</span></label>
             <input type="hidden" name="username" autocomplete="username" value="md-viewer-pwa">
             <input type="password" id="github-token" name="password" autocomplete="current-password" placeholder="ghp_xxxxxxxxxxxx">
             <button type="submit" class="btn btn-primary" id="btn-fetch-repos">リポジトリ一覧を取得</button>
           </form>
+=======
+          <label>Personal Access Token</label>
+          <input type="password" id="github-token" placeholder="ghp_xxxxxxxxxxxx">
+          <button class="btn btn-primary" onclick="fetchGithubRepos()" id="btn-fetch-repos">リポジトリ一覧を取得</button>
+>>>>>>> 2a69c0701a3806828d071710064568f419d163a7
 
           <!-- PAT 入力後に表示されるリポジトリ選択エリア -->
           <div id="github-repo-section" style="display:none;">
             <label>Push 先リポジトリ（Private のみ表示）</label>
+<<<<<<< HEAD
             <select id="github-repo-select" onchange="onRepoSelected()">
+=======
+            <select id="github-repo-select" onChange="onRepoSelected()">
+>>>>>>> 2a69c0701a3806828d071710064568f419d163a7
               <option value="">-- リポジトリを選択 --</option>
             </select>
             <label>ブランチ</label>
@@ -594,8 +612,13 @@
             データ管理
           </h3>
           <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+<<<<<<< HEAD
             リポジトリ名やブランチなどの設定はブラウザに保存されます。
             トークンは Chrome のパスワード保存機能で管理できます。
+=======
+            設定はこのデバイスのメモリ内に保存されます。ブラウザを閉じると再入力が必要です。
+            セキュリティのため、トークンはローカルストレージに保存しません。
+>>>>>>> 2a69c0701a3806828d071710064568f419d163a7
           </p>
           <button class="btn btn-danger" onclick="clearAllSettings()">設定をクリア</button>
         </div>
@@ -620,6 +643,7 @@
 
   <script>
     // ============================================================
+<<<<<<< HEAD
     // アプリ全体の状態
     // トークン類: メモリのみ（Chrome パスワード保存で管理）
     // 設定値: localStorage に保存して次回起動時に復元
@@ -636,6 +660,21 @@
       githubRepo: savedSettings.githubRepo || null,
       githubBranch: savedSettings.githubBranch || 'main',
       githubPath: savedSettings.githubPath || '',
+=======
+    // アプリ全体の状態（メモリ内のみ。localStorage は使わない）
+    // ============================================================
+    const state = {
+      // Google Drive
+      gdriveToken: null,       // OAuth アクセストークン
+      gdriveClientId: null,
+      gdriveFolderId: null,
+
+      // GitHub
+      githubToken: null,
+      githubRepo: null,
+      githubBranch: 'main',
+      githubPath: '',
+>>>>>>> 2a69c0701a3806828d071710064568f419d163a7
 
       // ファイル
       files: [],               // { id, name, modifiedTime, source: 'gdrive'|'github' }
@@ -648,6 +687,7 @@
     };
 
     // ============================================================
+<<<<<<< HEAD
     // localStorage への設定保存（トークン以外の設定のみ）
     // ============================================================
     function saveSettings() {
@@ -679,6 +719,8 @@
     })();
 
     // ============================================================
+=======
+>>>>>>> 2a69c0701a3806828d071710064568f419d163a7
     // ページ切替
     // ============================================================
     function showPage(name) {
@@ -715,7 +757,10 @@
       }
       state.gdriveClientId = clientId;
       state.gdriveFolderId = document.getElementById('gdrive-folder-id').value.trim();
+<<<<<<< HEAD
       saveSettings();  // Client ID・フォルダIDを保存
+=======
+>>>>>>> 2a69c0701a3806828d071710064568f419d163a7
 
       // OAuth2 Implicit Flow（リダイレクトなし、ポップアップ使用）
       const redirectUri = window.location.origin + window.location.pathname;
@@ -928,7 +973,10 @@
         }
 
         updateGithubStatus(true);
+<<<<<<< HEAD
         saveSettings();  // リポジトリ名・ブランチ・パスを保存
+=======
+>>>>>>> 2a69c0701a3806828d071710064568f419d163a7
         showToast('GitHub に接続しました: ' + data.full_name + ' (Private)', 'success');
         loadGithubFiles();
       } catch (err) {
@@ -1314,9 +1362,13 @@
         githubToken: null, githubRepo: null, githubBranch: 'main', githubPath: '',
         files: [], currentFile: null, currentContent: '', isEditing: false
       });
+<<<<<<< HEAD
       localStorage.removeItem('mdviewer_settings');
       document.querySelectorAll('.settings-section input').forEach(i => i.value = '');
       document.getElementById('gdrive-client-id').value = '975677173358-i3rdoqc0je229uobr9cqq1sb63ett2pp.apps.googleusercontent.com';
+=======
+      document.querySelectorAll('.settings-section input').forEach(i => i.value = '');
+>>>>>>> 2a69c0701a3806828d071710064568f419d163a7
       document.getElementById('github-branch').value = 'main';
       document.getElementById('github-repo-select').innerHTML = '<option value="">-- リポジトリを選択 --</option>';
       document.getElementById('github-repo-section').style.display = 'none';
