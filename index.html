@@ -41,29 +41,53 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #0f172a;
-      --bg-surface: #1e293b;
-      --bg-hover: #334155;
-      --text: #e2e8f0;
-      --text-muted: #94a3b8;
-      --accent: #3b82f6;
-      --accent-hover: #2563eb;
-      --border: #334155;
-      --success: #22c55e;
-      --warning: #f59e0b;
-      --danger: #ef4444;
-      --radius: 12px;
+      --bg: #0a0e1a;
+      --bg-surface: rgba(22, 30, 50, 0.85);
+      --bg-hover: rgba(55, 65, 95, 0.6);
+      --card-bg: rgba(30, 40, 65, 0.7);
+      --text: #e8ecf4;
+      --text-muted: #8892a8;
+      --accent: #6c8aff;
+      --accent-hover: #5470e6;
+      --accent-glow: rgba(108, 138, 255, 0.25);
+      --border: rgba(100, 120, 180, 0.15);
+      --border-glow: rgba(108, 138, 255, 0.3);
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --radius: 14px;
       --safe-top: env(safe-area-inset-top, 0px);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --glass: saturate(180%) blur(20px);
     }
 
     html, body {
       height: 100%;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
       background: var(--bg);
       color: var(--text);
       -webkit-text-size-adjust: 100%;
       overflow: hidden;
+    }
+
+    /* 背景にグラデーションオーブ */
+    body::before {
+      content: '';
+      position: fixed;
+      top: -30%; left: -20%;
+      width: 70%; height: 70%;
+      background: radial-gradient(circle, rgba(108,138,255,0.08) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    body::after {
+      content: '';
+      position: fixed;
+      bottom: -30%; right: -20%;
+      width: 60%; height: 60%;
+      background: radial-gradient(circle, rgba(139,92,246,0.06) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
     }
 
     /* ===== アプリ全体のレイアウト ===== */
@@ -73,6 +97,8 @@
       height: 100%;
       padding-top: var(--safe-top);
       padding-bottom: var(--safe-bottom);
+      position: relative;
+      z-index: 1;
     }
 
     /* ===== ヘッダー ===== */
@@ -80,8 +106,10 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 16px;
+      padding: 12px 20px;
       background: var(--bg-surface);
+      -webkit-backdrop-filter: var(--glass);
+      backdrop-filter: var(--glass);
       border-bottom: 1px solid var(--border);
       min-height: 56px;
       flex-shrink: 0;
@@ -91,14 +119,16 @@
       font-weight: 700;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
+      letter-spacing: -0.3px;
     }
     header h1 .logo {
-      width: 28px; height: 28px;
-      background: var(--accent);
-      border-radius: 6px;
+      width: 30px; height: 30px;
+      background: linear-gradient(135deg, #6c8aff, #8b5cf6);
+      border-radius: 8px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 12px; font-weight: 800; color: white;
+      font-size: 11px; font-weight: 800; color: white;
+      box-shadow: 0 2px 10px rgba(108,138,255,0.3);
     }
     .header-actions {
       display: flex;
@@ -111,28 +141,40 @@
       align-items: center;
       gap: 6px;
       padding: 8px 14px;
-      border: none;
-      border-radius: 8px;
+      border: 1px solid transparent;
+      border-radius: 10px;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: all 0.2s ease;
       color: white;
       -webkit-tap-highlight-color: transparent;
+      position: relative;
+      overflow: hidden;
     }
-    .btn-primary { background: var(--accent); }
-    .btn-primary:hover { background: var(--accent-hover); }
-    .btn-secondary { background: var(--bg-hover); color: var(--text); }
-    .btn-secondary:hover { background: #475569; }
-    .btn-success { background: var(--success); }
+    .btn::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.08) 0%, transparent 100%);
+      pointer-events: none;
+    }
+    .btn-primary { background: var(--accent); box-shadow: 0 2px 12px var(--accent-glow); }
+    .btn-primary:hover { background: var(--accent-hover); box-shadow: 0 4px 20px var(--accent-glow); transform: translateY(-1px); }
+    .btn-secondary { background: var(--bg-hover); color: var(--text); border-color: var(--border); }
+    .btn-secondary:hover { background: rgba(80,95,130,0.5); border-color: var(--border-glow); }
+    .btn-success { background: var(--success); box-shadow: 0 2px 12px rgba(52,211,153,0.25); }
+    .btn-success:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(52,211,153,0.35); }
     .btn-danger { background: var(--danger); }
     .btn-icon {
       width: 40px; height: 40px;
-      padding: 0; border-radius: 10px;
+      padding: 0; border-radius: 12px;
       display: flex; align-items: center; justify-content: center;
       background: var(--bg-hover);
+      border: 1px solid var(--border);
     }
-    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-icon:hover { border-color: var(--border-glow); background: rgba(80,95,130,0.5); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
 
     /* ===== メインコンテンツ ===== */
     main {
@@ -149,35 +191,46 @@
       -webkit-overflow-scrolling: touch;
       padding: 16px;
       display: none;
+      animation: fadeIn 0.25s ease;
     }
     .page.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
     /* ===== ファイル一覧 ===== */
     .file-list {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
     }
     .file-item {
       display: flex;
       align-items: center;
       gap: 12px;
       padding: 14px 16px;
-      background: var(--bg-surface);
+      background: var(--card-bg);
       border-radius: var(--radius);
       cursor: pointer;
-      transition: background 0.15s;
+      transition: all 0.2s ease;
       border: 1px solid var(--border);
+      -webkit-backdrop-filter: saturate(120%) blur(10px);
+      backdrop-filter: saturate(120%) blur(10px);
     }
-    .file-item:hover, .file-item:active { background: var(--bg-hover); }
+    .file-item:hover, .file-item:active {
+      background: var(--bg-hover);
+      border-color: var(--border-glow);
+      transform: translateX(4px);
+      box-shadow: 0 2px 16px rgba(108,138,255,0.08);
+    }
     .file-icon {
       width: 40px; height: 40px;
-      background: var(--accent);
       border-radius: 10px;
       display: flex; align-items: center; justify-content: center;
       font-size: 16px; font-weight: 700; color: white;
       flex-shrink: 0;
     }
+    .file-icon.md-icon { background: linear-gradient(135deg, #6c8aff, #818cf8); }
+    .file-icon.pdf-icon { background: linear-gradient(135deg, #f87171, #fb923c); }
+    .file-icon.default-icon { background: linear-gradient(135deg, #6c8aff, #8b5cf6); }
     .file-info { flex: 1; min-width: 0; }
     .file-name {
       font-size: 15px;
@@ -185,11 +238,12 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      letter-spacing: -0.2px;
     }
     .file-meta {
       font-size: 12px;
       color: var(--text-muted);
-      margin-top: 2px;
+      margin-top: 3px;
     }
 
     /* ===== Markdown 表示エリア ===== */
@@ -200,7 +254,7 @@
       font-size: 16px;
     }
     .md-viewer h1 { font-size: 28px; font-weight: 800; margin: 32px 0 16px; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
-    .md-viewer h2 { font-size: 22px; font-weight: 700; margin: 28px 0 12px; color: var(--accent); }
+    .md-viewer h2 { font-size: 22px; font-weight: 700; margin: 28px 0 12px; background: linear-gradient(135deg, var(--accent), #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
     .md-viewer h3 { font-size: 18px; font-weight: 700; margin: 24px 0 10px; }
     .md-viewer h4, .md-viewer h5, .md-viewer h6 { font-size: 16px; font-weight: 700; margin: 20px 0 8px; }
     .md-viewer p { margin: 12px 0; }
@@ -208,20 +262,21 @@
     .md-viewer a:hover { text-decoration: underline; }
     .md-viewer img { max-width: 100%; border-radius: 8px; margin: 12px 0; }
     .md-viewer blockquote {
-      border-left: 4px solid var(--accent);
-      padding: 8px 16px;
+      border-left: 3px solid var(--accent);
+      padding: 10px 18px;
       margin: 12px 0;
-      background: rgba(59, 130, 246, 0.08);
-      border-radius: 0 8px 8px 0;
+      background: rgba(108, 138, 255, 0.06);
+      border-radius: 0 10px 10px 0;
       color: var(--text-muted);
     }
     .md-viewer pre {
-      background: #0d1117;
-      border-radius: 8px;
+      background: rgba(8, 12, 22, 0.8);
+      border-radius: 10px;
       padding: 16px;
       overflow-x: auto;
       margin: 12px 0;
       border: 1px solid var(--border);
+      box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
     }
     .md-viewer code {
       font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
@@ -281,19 +336,24 @@
 
     /* ===== 設定画面 ===== */
     .settings-section {
-      background: var(--bg-surface);
+      background: var(--card-bg);
+      -webkit-backdrop-filter: saturate(120%) blur(12px);
+      backdrop-filter: saturate(120%) blur(12px);
       border-radius: var(--radius);
       padding: 20px;
       margin-bottom: 16px;
       border: 1px solid var(--border);
+      transition: border-color 0.2s;
     }
+    .settings-section:hover { border-color: var(--border-glow); }
     .settings-section h3 {
       font-size: 16px;
       font-weight: 700;
-      margin-bottom: 12px;
+      margin-bottom: 14px;
       display: flex;
       align-items: center;
       gap: 8px;
+      letter-spacing: -0.2px;
     }
     .settings-section label {
       display: block;
@@ -301,22 +361,24 @@
       color: var(--text-muted);
       margin-bottom: 6px;
       font-weight: 600;
+      letter-spacing: 0.2px;
     }
     .settings-section input[type="text"],
     .settings-section input[type="password"],
     .settings-section select {
       width: 100%;
       padding: 10px 14px;
-      background: var(--bg);
+      background: rgba(10, 14, 26, 0.6);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 10px;
       color: var(--text);
       font-size: 15px;
       margin-bottom: 12px;
       outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
     .settings-section input:focus,
-    .settings-section select:focus { border-color: var(--accent); }
+    .settings-section select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
 
     /* ===== 通知バナー ===== */
     .toast {
@@ -324,25 +386,30 @@
       bottom: calc(80px + var(--safe-bottom));
       left: 50%;
       transform: translateX(-50%) translateY(100px);
-      padding: 12px 20px;
-      border-radius: 10px;
+      padding: 12px 24px;
+      border-radius: 12px;
       font-size: 14px;
       font-weight: 600;
       z-index: 9999;
-      transition: transform 0.3s ease;
+      transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
       max-width: 90%;
       text-align: center;
+      -webkit-backdrop-filter: var(--glass);
+      backdrop-filter: var(--glass);
+      border: 1px solid rgba(255,255,255,0.1);
     }
     .toast.show { transform: translateX(-50%) translateY(0); }
-    .toast.success { background: var(--success); color: white; }
-    .toast.error { background: var(--danger); color: white; }
-    .toast.info { background: var(--accent); color: white; }
+    .toast.success { background: rgba(52,211,153,0.9); color: #022c22; }
+    .toast.error { background: rgba(248,113,113,0.9); color: #450a0a; }
+    .toast.info { background: rgba(108,138,255,0.9); color: white; }
 
     /* ===== 下部ナビゲーション ===== */
     nav {
       display: flex;
       border-top: 1px solid var(--border);
       background: var(--bg-surface);
+      -webkit-backdrop-filter: var(--glass);
+      backdrop-filter: var(--glass);
       flex-shrink: 0;
     }
     nav button {
@@ -359,29 +426,45 @@
       font-weight: 600;
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
-      transition: color 0.15s;
+      transition: color 0.2s;
+      position: relative;
     }
     nav button.active { color: var(--accent); }
+    nav button.active::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 24px;
+      height: 2px;
+      background: var(--accent);
+      border-radius: 1px;
+      box-shadow: 0 0 8px var(--accent-glow);
+    }
     nav button svg { width: 22px; height: 22px; }
 
     /* ===== ビューア ヘッダー ===== */
     .viewer-header {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       margin-bottom: 20px;
       padding-bottom: 12px;
       border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
     }
     .viewer-header .back-btn {
       width: 36px; height: 36px;
       background: var(--bg-hover);
-      border: none; border-radius: 8px;
+      border: 1px solid var(--border); border-radius: 10px;
       color: var(--text);
       cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
+      transition: all 0.2s;
     }
+    .viewer-header .back-btn:hover { border-color: var(--border-glow); background: rgba(80,95,130,0.5); }
     .viewer-header .title {
       flex: 1;
       font-size: 16px;
@@ -389,6 +472,7 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      letter-spacing: -0.2px;
     }
 
     /* ===== ローディング ===== */
@@ -399,7 +483,7 @@
       justify-content: center;
       padding: 60px 20px;
       color: var(--text-muted);
-      gap: 12px;
+      gap: 14px;
     }
     .spinner {
       width: 36px; height: 36px;
@@ -407,6 +491,7 @@
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
+      box-shadow: 0 0 12px var(--accent-glow);
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -416,54 +501,57 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 60px 20px;
+      padding: 80px 20px;
       text-align: center;
       color: var(--text-muted);
     }
-    .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
-    .empty-state p { font-size: 14px; line-height: 1.6; }
+    .empty-state .icon { font-size: 52px; margin-bottom: 16px; opacity: 0.7; }
+    .empty-state p { font-size: 14px; line-height: 1.7; max-width: 280px; }
 
     /* ===== エディタ ===== */
     .editor-area {
       width: 100%;
       min-height: 300px;
       padding: 16px;
-      background: var(--bg);
+      background: rgba(10, 14, 26, 0.7);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 12px;
       color: var(--text);
-      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
       font-size: 14px;
-      line-height: 1.6;
+      line-height: 1.7;
       resize: vertical;
       outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
-    .editor-area:focus { border-color: var(--accent); }
+    .editor-area:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
 
-    /* ===== タブ切替 ===== */
+    /* ===== タブ切替（プレビュー/ソース） ===== */
     .tab-bar {
       display: flex;
       gap: 4px;
-      background: var(--bg);
+      background: rgba(10, 14, 26, 0.5);
       padding: 4px;
-      border-radius: 10px;
+      border-radius: 12px;
       margin-bottom: 16px;
+      border: 1px solid var(--border);
     }
     .tab-bar button {
       flex: 1;
       padding: 8px;
       border: none;
-      border-radius: 8px;
+      border-radius: 10px;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
       background: transparent;
       color: var(--text-muted);
-      transition: all 0.15s;
+      transition: all 0.2s;
     }
     .tab-bar button.active {
-      background: var(--accent);
+      background: linear-gradient(135deg, var(--accent), #8b5cf6);
       color: white;
+      box-shadow: 0 2px 10px var(--accent-glow);
     }
 
     /* ===== 検索バー ===== */
@@ -473,18 +561,22 @@
     }
     .search-bar input {
       width: 100%;
-      padding: 10px 14px 10px 40px;
-      background: var(--bg-surface);
+      padding: 11px 14px 11px 42px;
+      background: var(--card-bg);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 12px;
       color: var(--text);
       font-size: 15px;
       outline: none;
+      -webkit-backdrop-filter: saturate(120%) blur(10px);
+      backdrop-filter: saturate(120%) blur(10px);
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
-    .search-bar input:focus { border-color: var(--accent); }
+    .search-bar input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+    .search-bar input::placeholder { color: var(--text-muted); opacity: 0.6; }
     .search-bar svg {
       position: absolute;
-      left: 12px;
+      left: 14px;
       top: 50%;
       transform: translateY(-50%);
       width: 18px;
@@ -497,72 +589,156 @@
       display: flex;
       align-items: center;
       gap: 4px;
-      padding: 8px 16px;
+      padding: 10px 16px;
       font-size: 13px;
       color: var(--text-muted);
       overflow-x: auto;
       white-space: nowrap;
-      border-bottom: 1px solid var(--border);
+      background: rgba(10, 14, 26, 0.3);
+      border-radius: 10px;
+      margin-bottom: 12px;
     }
     .breadcrumb-item {
       color: var(--accent);
       cursor: pointer;
       flex-shrink: 0;
+      transition: opacity 0.15s;
     }
-    .breadcrumb-item:hover { text-decoration: underline; }
-    .breadcrumb-sep { flex-shrink: 0; color: var(--text-muted); }
-    .breadcrumb-current { color: var(--text-primary); flex-shrink: 0; }
+    .breadcrumb-item:hover { opacity: 0.8; text-decoration: underline; }
+    .breadcrumb-sep { flex-shrink: 0; color: var(--text-muted); opacity: 0.5; }
+    .breadcrumb-current { color: var(--text); flex-shrink: 0; font-weight: 600; }
 
     /* ===== フォルダアイテム ===== */
     .folder-item {
       display: flex;
       align-items: center;
       padding: 14px 16px;
-      border-bottom: 1px solid var(--border);
+      margin-bottom: 4px;
+      border-radius: var(--radius);
+      background: var(--card-bg);
+      border: 1px solid var(--border);
       cursor: pointer;
-      transition: background 0.15s;
+      transition: all 0.2s ease;
     }
-    .folder-item:hover { background: var(--card-bg); }
+    .folder-item:hover { background: var(--bg-hover); border-color: rgba(251,191,36,0.3); transform: translateX(4px); }
     .folder-icon {
       width: 40px; height: 40px;
       border-radius: 10px;
       display: flex; align-items: center; justify-content: center;
       font-size: 20px;
-      background: #f59e0b33;
-      color: #f59e0b;
+      background: linear-gradient(135deg, rgba(251,191,36,0.2), rgba(245,158,11,0.2));
+      color: #fbbf24;
       flex-shrink: 0;
       margin-right: 12px;
     }
     .folder-name {
       flex: 1;
       font-size: 15px;
-      font-weight: 500;
-      color: var(--text-primary);
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: -0.2px;
     }
     .folder-count {
       font-size: 12px;
       color: var(--text-muted);
       margin-right: 8px;
+      background: rgba(255,255,255,0.05);
+      padding: 2px 8px;
+      border-radius: 8px;
     }
+
+    /* ===== ファイルタブバー ===== */
+    .file-tabs {
+      display: flex;
+      overflow-x: auto;
+      background: rgba(10, 14, 26, 0.6);
+      border-bottom: 1px solid var(--border);
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      padding: 4px 4px 0;
+      gap: 2px;
+    }
+    .file-tabs::-webkit-scrollbar { display: none; }
+    .file-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      font-size: 12px;
+      color: var(--text-muted);
+      border-radius: 10px 10px 0 0;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: all 0.2s ease;
+      max-width: 180px;
+      border: 1px solid transparent;
+      border-bottom: none;
+    }
+    .file-tab:hover { background: var(--bg-hover); color: var(--text); }
+    .file-tab.active {
+      background: var(--card-bg);
+      color: var(--accent);
+      border-color: var(--border);
+      border-bottom: none;
+      position: relative;
+    }
+    .file-tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0; right: 0;
+      height: 2px;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent-glow);
+    }
+    .file-tab-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-weight: 500;
+    }
+    .file-tab-close {
+      width: 18px; height: 18px;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; line-height: 1;
+      color: var(--text-muted);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: all 0.15s;
+    }
+    .file-tab-close:hover { background: rgba(248,113,113,0.2); color: #f87171; }
+    .file-tab-type {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 5px;
+      border-radius: 4px;
+      flex-shrink: 0;
+      letter-spacing: 0.5px;
+    }
+    .file-tab-type.md { background: rgba(108,138,255,0.15); color: #8aa8ff; }
+    .file-tab-type.pdf { background: rgba(248,113,113,0.15); color: #fca5a5; }
 
     /* ===== 接続ステータス ===== */
     .status-badge {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 4px 10px;
+      padding: 4px 12px;
       border-radius: 20px;
       font-size: 12px;
       font-weight: 600;
+      border: 1px solid transparent;
     }
-    .status-badge.connected { background: rgba(34,197,94,0.15); color: var(--success); }
-    .status-badge.disconnected { background: rgba(239,68,68,0.15); color: var(--danger); }
+    .status-badge.connected { background: rgba(52,211,153,0.1); color: var(--success); border-color: rgba(52,211,153,0.2); }
+    .status-badge.disconnected { background: rgba(248,113,113,0.1); color: var(--danger); border-color: rgba(248,113,113,0.2); }
     .status-dot {
       width: 8px; height: 8px;
       border-radius: 50%;
     }
-    .status-badge.connected .status-dot { background: var(--success); }
+    .status-badge.connected .status-dot { background: var(--success); box-shadow: 0 0 6px rgba(52,211,153,0.5); animation: pulse-dot 2s ease-in-out infinite; }
     .status-badge.disconnected .status-dot { background: var(--danger); }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
   </style>
 </head>
 <body>
@@ -597,6 +773,8 @@
 
       <!-- ビューアページ -->
       <div id="page-viewer" class="page">
+        <!-- 開いているファイルのタブバー -->
+        <div id="file-tabs" class="file-tabs" style="display:none;"></div>
         <div class="viewer-header">
           <button class="back-btn" onclick="showPage('files')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
@@ -741,6 +919,11 @@
       currentContent: '',      // Markdown ソース
       isEditing: false,
       currentPath: '',         // フォルダナビゲーション: 現在表示中のパス
+
+      // タブ管理: 複数ファイルを開いて切り替え可能にする
+      // tabs: [{ file, content, renderedHtml, pdfData, isEditing }]
+      openTabs: [],
+      activeTabIndex: -1,
 
       // Google Drive OAuth 用
       gdriveApiKey: null,
@@ -1658,13 +1841,14 @@
           const fileName = pathParts.pop();
           const folderPath = pathParts.length > 0 ? pathParts.join('/') + '/' : '';
           const date = f.modifiedTime ? new Date(f.modifiedTime).toLocaleDateString('ja-JP') : '';
+          const iconClass = f.name.endsWith('.pdf') ? 'pdf-icon' : 'md-icon';
           return '<div class="file-item" onclick="openFile(' + idx + ')">' +
-            '<div class="file-icon">' + (f.name.endsWith('.pdf') ? 'PDF' : 'MD') + '</div>' +
+            '<div class="file-icon ' + iconClass + '">' + (f.name.endsWith('.pdf') ? 'PDF' : 'MD') + '</div>' +
             '<div class="file-info">' +
             '<div class="file-name">' + escapeHtml(fileName) + '</div>' +
             '<div class="file-meta">' + (folderPath ? escapeHtml(folderPath) + ' ・ ' : '') + date + '</div>' +
             '</div>' +
-            '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-muted);flex-shrink:0;"><path d="m9 18 6-6-6-6"/></svg>' +
+            '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-muted);flex-shrink:0;opacity:0.5;"><path d="m9 18 6-6-6-6"/></svg>' +
             '</div>';
         }).join('');
         return;
@@ -1732,13 +1916,14 @@
       for (const f of currentFiles) {
         const idx = state.files.indexOf(f);
         const date = f.modifiedTime ? new Date(f.modifiedTime).toLocaleDateString('ja-JP') : '';
+        const iconCls = f.name.endsWith('.pdf') ? 'pdf-icon' : 'md-icon';
         html += '<div class="file-item" onclick="openFile(' + idx + ')">' +
-          '<div class="file-icon">' + (f.name.endsWith('.pdf') ? 'PDF' : 'MD') + '</div>' +
+          '<div class="file-icon ' + iconCls + '">' + (f.name.endsWith('.pdf') ? 'PDF' : 'MD') + '</div>' +
           '<div class="file-info">' +
           '<div class="file-name">' + escapeHtml(f.name) + '</div>' +
           '<div class="file-meta">Google Drive' + (date ? ' ・ ' + date : '') + '</div>' +
           '</div>' +
-          '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-muted);flex-shrink:0;"><path d="m9 18 6-6-6-6"/></svg>' +
+          '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-muted);flex-shrink:0;opacity:0.5;"><path d="m9 18 6-6-6-6"/></svg>' +
           '</div>';
       }
 
@@ -1754,11 +1939,146 @@
     }
 
     // ============================================================
-    // ファイルを開く
+    // タブ管理
+    // ============================================================
+    function renderFileTabs() {
+      const container = document.getElementById('file-tabs');
+      if (state.openTabs.length === 0) {
+        container.style.display = 'none';
+        return;
+      }
+      container.style.display = 'flex';
+      container.innerHTML = state.openTabs.map((tab, i) => {
+        const isPdf = tab.file.name.endsWith('.pdf');
+        const typeClass = isPdf ? 'pdf' : 'md';
+        const typeLabel = isPdf ? 'PDF' : 'MD';
+        const activeClass = i === state.activeTabIndex ? ' active' : '';
+        return '<div class="file-tab' + activeClass + '" onclick="switchToTab(' + i + ')">' +
+          '<span class="file-tab-type ' + typeClass + '">' + typeLabel + '</span>' +
+          '<span class="file-tab-label">' + escapeHtml(tab.file.name) + '</span>' +
+          '<span class="file-tab-close" onclick="event.stopPropagation(); closeTab(' + i + ')">×</span>' +
+          '</div>';
+      }).join('');
+    }
+
+    // 現在のタブの編集状態を保存
+    function saveCurrentTabState() {
+      if (state.activeTabIndex < 0 || state.activeTabIndex >= state.openTabs.length) return;
+      const tab = state.openTabs[state.activeTabIndex];
+      tab.isEditing = state.isEditing;
+      if (state.isEditing) {
+        tab.content = document.getElementById('editor-content').value;
+      }
+      // 表示中のHTMLも保存（切り替え時の再レンダリングを回避）
+      if (!tab.file.name.endsWith('.pdf')) {
+        tab.renderedHtml = document.getElementById('viewer-content').innerHTML;
+      }
+    }
+
+    // タブの内容を画面に反映
+    function restoreTabState(tab) {
+      const viewer = document.getElementById('viewer-content');
+      const editor = document.getElementById('editor-content');
+      const editTabs = document.getElementById('edit-tabs');
+
+      state.currentFile = tab.file;
+      state.currentContent = tab.content || '';
+      state.isEditing = tab.isEditing || false;
+
+      document.getElementById('viewer-title').textContent = tab.file.name;
+
+      if (tab.file.name.endsWith('.pdf')) {
+        // PDF
+        document.getElementById('btn-edit').style.display = 'none';
+        document.getElementById('btn-save-drive').style.display = 'none';
+        editTabs.style.display = 'none';
+        editor.style.display = 'none';
+        viewer.style.display = 'block';
+        if (tab.renderedHtml) {
+          viewer.innerHTML = tab.renderedHtml;
+        } else {
+          viewer.innerHTML = '<div class="loading"><div class="spinner"></div>読み込み中...</div>';
+        }
+      } else {
+        // Markdown
+        document.getElementById('btn-edit').style.display = '';
+        document.getElementById('btn-save-drive').style.display = '';
+        if (state.isEditing) {
+          editor.value = tab.content || '';
+          editTabs.style.display = 'flex';
+          editor.style.display = 'block';
+          viewer.style.display = 'none';
+          document.getElementById('btn-edit').innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>閲覧';
+        } else {
+          editTabs.style.display = 'none';
+          editor.style.display = 'none';
+          viewer.style.display = 'block';
+          document.getElementById('btn-edit').innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>編集';
+          if (tab.renderedHtml) {
+            viewer.innerHTML = tab.renderedHtml;
+          } else {
+            renderMarkdown(tab.content || '');
+          }
+        }
+      }
+    }
+
+    function switchToTab(index) {
+      if (index === state.activeTabIndex) return;
+      saveCurrentTabState();
+      state.activeTabIndex = index;
+      restoreTabState(state.openTabs[index]);
+      renderFileTabs();
+    }
+
+    function closeTab(index) {
+      saveCurrentTabState();
+      state.openTabs.splice(index, 1);
+
+      if (state.openTabs.length === 0) {
+        // タブが全部閉じた → ファイル一覧に戻る
+        state.activeTabIndex = -1;
+        state.currentFile = null;
+        state.currentContent = '';
+        showPage('files');
+        renderFileTabs();
+        return;
+      }
+
+      // アクティブタブの調整
+      if (index === state.activeTabIndex) {
+        // 閉じたのがアクティブ → 前のタブか最後のタブに切り替え
+        state.activeTabIndex = Math.min(index, state.openTabs.length - 1);
+        restoreTabState(state.openTabs[state.activeTabIndex]);
+      } else if (index < state.activeTabIndex) {
+        state.activeTabIndex--;
+      }
+      renderFileTabs();
+    }
+
+    // ============================================================
+    // ファイルを開く（タブ対応版）
     // ============================================================
     async function openFile(index) {
       const file = state.files[index];
       if (!file) return;
+
+      // 既に開いてるタブがあればそこに切り替え
+      const existingIdx = state.openTabs.findIndex(t => t.file.id === file.id);
+      if (existingIdx >= 0) {
+        saveCurrentTabState();
+        state.activeTabIndex = existingIdx;
+        restoreTabState(state.openTabs[existingIdx]);
+        renderFileTabs();
+        showPage('viewer');
+        return;
+      }
+
+      // 新しいタブを作成
+      saveCurrentTabState();
+      const newTab = { file, content: '', renderedHtml: null, pdfData: null, isEditing: false };
+      state.openTabs.push(newTab);
+      state.activeTabIndex = state.openTabs.length - 1;
 
       state.currentFile = file;
       state.isEditing = false;
@@ -1768,14 +2088,14 @@
       document.getElementById('editor-content').style.display = 'none';
       document.getElementById('viewer-content').style.display = 'block';
       showPage('viewer');
+      renderFileTabs();
 
       try {
-        // トークン切れチェック
         if (!state.gdriveToken) {
           throw new Error('Google Drive に再接続してください（設定画面へ）');
         }
 
-        // PDF ファイルの場合は専用レンダラーで表示
+        // PDF ファイル
         if (file.name.endsWith('.pdf')) {
           document.getElementById('btn-edit').style.display = 'none';
           document.getElementById('btn-save-drive').style.display = 'none';
@@ -1786,7 +2106,6 @@
               path: '/drive/v3/files/' + file.id,
               params: { alt: 'media' }
             });
-            // gapi は body を文字列で返すので ArrayBuffer に変換
             const bytes = new Uint8Array(response.body.length);
             for (let i = 0; i < response.body.length; i++) {
               bytes[i] = response.body.charCodeAt(i) & 0xff;
@@ -1801,15 +2120,19 @@
             pdfData = await res.arrayBuffer();
           }
           await renderPdf(pdfData);
+          // レンダリング結果をタブに保存
+          newTab.renderedHtml = document.getElementById('viewer-content').innerHTML;
           return;
         }
 
-        // 通常の Markdown ファイル（Google Drive から取得）
+        // Markdown ファイル
         document.getElementById('btn-edit').style.display = '';
         document.getElementById('btn-save-drive').style.display = '';
         const content = await loadGdriveFileContent(file.id);
         state.currentContent = content;
+        newTab.content = content;
         renderMarkdown(content);
+        newTab.renderedHtml = document.getElementById('viewer-content').innerHTML;
       } catch (err) {
         document.getElementById('viewer-content').innerHTML =
           '<div class="empty-state"><div class="icon">⚠️</div><p>読み込みエラー: ' + escapeHtml(err.message) + '</p></div>';
@@ -1973,6 +2296,13 @@
         renderMarkdown(state.currentContent);
         btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>編集';
       }
+      // タブの状態も同期
+      if (state.activeTabIndex >= 0 && state.activeTabIndex < state.openTabs.length) {
+        const tab = state.openTabs[state.activeTabIndex];
+        tab.isEditing = state.isEditing;
+        tab.content = state.currentContent;
+        tab.renderedHtml = viewer.innerHTML;
+      }
     }
 
     function switchTab(tab) {
@@ -2030,7 +2360,8 @@
         gdriveToken: null, gdriveClientId: null, gdriveFolderId: null,
         githubToken: null, githubBranch: 'main',
         repoMappings: {}, githubRepos: [],
-        files: [], currentFile: null, currentContent: '', isEditing: false
+        files: [], currentFile: null, currentContent: '', isEditing: false,
+        openTabs: [], activeTabIndex: -1
       });
       localStorage.removeItem('mdviewer_settings');
       document.querySelectorAll('.settings-section input').forEach(i => i.value = '');
@@ -2040,6 +2371,7 @@
       document.getElementById('github-repo-section').style.display = 'none';
       updateGdriveStatus(false);
       updateGithubStatus(false);
+      renderFileTabs();
       renderFileList();
       showToast('設定をクリアしました', 'info');
     }
