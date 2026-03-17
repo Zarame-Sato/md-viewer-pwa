@@ -608,10 +608,10 @@
             <label>ブランチ（全リポジトリ共通）</label>
             <input type="text" id="github-branch" placeholder="main" value="main">
 
-            <label style="margin-top:12px;">Drive フォルダ ↔ GitHub リポジトリ マッピング</label>
+            <label style="margin-top:12px;">GitHub リポジトリ → Drive フォルダ マッピング</label>
             <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
-              Google Drive の最上位フォルダ名と GitHub リポジトリを紐づけます。<br>
-              フォルダ名が一致するリポジトリは自動で候補に表示されます。
+              リポジトリを選ぶと Drive フォルダ名が自動で入ります。<br>
+              必要に応じてフォルダ名を修正してください。
             </p>
             <div id="repo-mapping-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
 
@@ -1066,24 +1066,8 @@
           addMappingRow(folder, existingMappings[folder]);
         });
       } else {
-        // 初回: リポジトリ名と一致しそうな Drive フォルダを自動提案
-        // （Drive 接続済みならファイルの drivePath からフォルダ名を抽出）
-        const driveFolders = new Set();
-        state.files.filter(f => f.source === 'gdrive' && f.drivePath).forEach(f => {
-          const topFolder = f.drivePath.split('/')[0];
-          if (topFolder !== f.name) driveFolders.add(topFolder);
-        });
-
-        if (driveFolders.size > 0) {
-          driveFolders.forEach(folder => {
-            // リポジトリ名と一致するものを自動選択
-            const matchRepo = state.githubRepos.find(r => r.split('/')[1] === folder);
-            addMappingRow(folder, matchRepo || '');
-          });
-        } else {
-          // Drive 未接続の場合は空行を1つ
-          addMappingRow('', '');
-        }
+        // 初回: 空行を1つ（リポジトリを選べばフォルダ名が自動入力される）
+        addMappingRow('', '');
       }
     }
 
@@ -1101,7 +1085,7 @@
       folderInput.type = 'text';
       folderInput.placeholder = 'Drive フォルダ名';
       folderInput.value = folderName;
-      folderInput.style.cssText = 'flex:1;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin:0;';
+      folderInput.style.cssText = 'flex:1;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin:0;min-width:0;';
       folderInput.className = 'mapping-folder';
 
       // → ラベル
@@ -1111,7 +1095,7 @@
 
       // リポジトリ選択ドロップダウン
       const repoSelect = document.createElement('select');
-      repoSelect.style.cssText = 'flex:1.5;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin:0;';
+      repoSelect.style.cssText = 'flex:1.5;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin:0;min-width:0;';
       repoSelect.className = 'mapping-repo';
       repoSelect.innerHTML = '<option value="">-- 選択 --</option>';
       state.githubRepos.forEach(r => {
@@ -1121,6 +1105,14 @@
         if (r === repoFullName) opt.selected = true;
         repoSelect.appendChild(opt);
       });
+      // リポジトリ選択時 → "owner/repo" の repo 部分を Drive フォルダ名に自動セット
+      repoSelect.addEventListener('change', () => {
+        const selected = repoSelect.value;
+        if (selected && !folderInput.value) {
+          // フォルダ名が空の場合のみ自動入力
+          folderInput.value = selected.split('/')[1] || '';
+        }
+      });
 
       // 削除ボタン
       const delBtn = document.createElement('button');
@@ -1128,9 +1120,9 @@
       delBtn.style.cssText = 'width:32px;height:32px;border:none;border-radius:6px;background:var(--danger);color:white;cursor:pointer;font-size:14px;flex-shrink:0;';
       delBtn.onclick = () => row.remove();
 
-      row.appendChild(folderInput);
-      row.appendChild(arrow);
       row.appendChild(repoSelect);
+      row.appendChild(arrow);
+      row.appendChild(folderInput);
       row.appendChild(delBtn);
       container.appendChild(row);
     }
