@@ -963,20 +963,6 @@
       return allFiles;
     }
 
-    // フォルダID → フルパスを逆引きする（メモリ上で高速）
-    function buildPathForFile(parentId, folderMap, rootId) {
-      const parts = [];
-      let current = parentId;
-      let safety = 20; // 無限ループ防止
-      while (current && safety-- > 0) {
-        if (current === rootId) break; // ルートに到達
-        const folder = folderMap.get(current);
-        if (!folder) break; // マイドライブ直下など
-        parts.unshift(folder.name);
-        current = folder.parentId;
-      }
-      return parts.join('/');
-    }
 
     // ============================================================
     // ファイル一覧キャッシュ（localStorage）
@@ -1063,30 +1049,87 @@
         });
       }
 
-      // ── ルートフォルダIDの判定 ──
+      // ── ルートフォルダID ──
       const rootId = state.gdriveFolderId || null;
 
-      // ── ファイルごとにフルパスを組み立て ──
-      const driveFiles = [];
-      for (const f of allTargetFiles) {
-        const parentId = (f.parents && f.parents[0]) || null;
+      // ── マッピング対象フォルダのIDを特定 ──
+      // マッピングがあれば、そのフォルダ名に一致するフォルダIDだけを許可リストにする
+      const mappingFolderNames = Object.keys(state.repoMappings);
+      const allowedRootIds = new Set(); // 表示を許可するトップレベルフォルダのID
 
-        // ルートフォルダ指定がある場合: そのフォルダ配下のファイルだけに絞る
-        if (rootId) {
-          // このファイルの親チェーンにルートフォルダが含まれるか確認
+      if (mappingFolderNames.length > 0) {
+        // マッピングされたフォルダ名と一致するフォルダIDを探す
+        for (const [fId, fData] of folderMap) {
+          if (mappingFolderNames.includes(fData.name)) {
+            // ルートフォルダ指定がある場合: その直下のフォルダか確認
+            if (rootId) {
+              if (fData.parentId === rootId) allowedRootIds.add(fId);
+            } else {
+              allowedRootIds.add(fId);
+            }
+          }
+        }
+      }
+
+      // ── あるファイルが許可フォルダ配下かを判定するヘルパー ──
+      function isFileAllowed(parentId) {
+        // マッピングなし → ルートフォルダ配下なら全部OK
+        if (mappingFolderNames.length === 0) {
+          if (!rootId) return true; // 何も指定なし → 全ファイル表示
+          // ルートフォルダ配下かチェック
           let current = parentId;
-          let isUnderRoot = false;
           let safety = 20;
           while (current && safety-- > 0) {
-            if (current === rootId) { isUnderRoot = true; break; }
+            if (current === rootId) return true;
             const folder = folderMap.get(current);
             if (!folder) break;
             current = folder.parentId;
           }
-          if (!isUnderRoot) continue; // ルート外のファイルはスキップ
+          return false;
         }
 
-        const folderPath = buildPathForFile(parentId, folderMap, rootId);
+        // マッピングあり → 許可フォルダのどれかの配下かチェック
+        let current = parentId;
+        let safety = 20;
+        while (current && safety-- > 0) {
+          if (allowedRootIds.has(current)) return true;
+          if (current === rootId) return false; // ルートに達したが許可フォルダを経由してない
+          const folder = folderMap.get(current);
+          if (!folder) break;
+          current = folder.parentId;
+        }
+        return false;
+      }
+
+      // ── 許可フォルダ配下のファイルをフィルタ + パスを組み立て ──
+      // パス組み立ての起点: マッピングあり → 許可フォルダID, なし → rootId
+      const pathRootIds = allowedRootIds.size > 0 ? allowedRootIds : (rootId ? new Set([rootId]) : null);
+
+      const driveFiles = [];
+      for (const f of allTargetFiles) {
+        const parentId = (f.parents && f.parents[0]) || null;
+
+        if (!isFileAllowed(parentId)) continue;
+
+        // パス組み立て（許可フォルダ or ルートフォルダをパスの起点にする）
+        const parts = [];
+        let current = parentId;
+        let safety = 20;
+        while (current && safety-- > 0) {
+          if (pathRootIds && pathRootIds.has(current)) {
+            // 起点フォルダ自体の名前もパスに含める
+            const folder = folderMap.get(current);
+            if (folder) parts.unshift(folder.name);
+            break;
+          }
+          if (current === rootId) break;
+          const folder = folderMap.get(current);
+          if (!folder) break;
+          parts.unshift(folder.name);
+          current = folder.parentId;
+        }
+
+        const folderPath = parts.join('/');
         const drivePath = folderPath ? folderPath + '/' + f.name : f.name;
 
         driveFiles.push({
