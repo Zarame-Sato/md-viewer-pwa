@@ -786,10 +786,12 @@
       }
       if (savedSettings.gdriveToken) {
         document.getElementById('github-save-token').checked = true;
-        state.gdriveToken = savedSettings.gdriveToken;
-        if (gapiReady && gapi.client) gapi.client.setToken({ access_token: state.gdriveToken });
-        // トークンが有効か確認してから「接続済み」にする
-        verifyAndLoadDrive();
+        // リダイレクト戻り（URLにトークンあり）の場合は古い保存トークンを使わない
+        if (!window.location.hash.includes('access_token=')) {
+          state.gdriveToken = savedSettings.gdriveToken;
+          if (gapiReady && gapi.client) gapi.client.setToken({ access_token: state.gdriveToken });
+          verifyAndLoadDrive();
+        }
       }
     })();
 
@@ -855,9 +857,10 @@
       state.gdriveFolderId = document.getElementById('gdrive-folder-id').value.trim();
       saveSettings();  // Client ID・フォルダIDを保存
 
-      // OAuth2 Implicit Flow（リダイレクトなし、ポップアップ使用）
+      // OAuth2 Implicit Flow
+      // iPad/iPhone ではポップアップがブロックされるため、
+      // 同じウィンドウでリダイレクトする方式を使う
       const redirectUri = window.location.origin + window.location.pathname;
-      // drive.file: このアプリで開いた／作成したファイルの読み書き許可
       const scope = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly';
       const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' +
         'client_id=' + encodeURIComponent(clientId) +
@@ -866,38 +869,10 @@
         '&scope=' + encodeURIComponent(scope) +
         '&prompt=consent';
 
-      // ポップアップで認証
-      const popup = window.open(authUrl, 'gdrive-auth', 'width=500,height=600');
-      if (!popup) {
-        showToast('ポップアップがブロックされました。許可してください', 'error');
-        return;
-      }
-
-      // ポップアップからトークンを受け取る
-      const timer = setInterval(() => {
-        try {
-          if (popup.closed) {
-            clearInterval(timer);
-            return;
-          }
-          const url = popup.location.href;
-          if (url.includes('access_token=')) {
-            clearInterval(timer);
-            const hash = popup.location.hash.substring(1);
-            const params = new URLSearchParams(hash);
-            state.gdriveToken = params.get('access_token');
-            // gapi にもトークンをセット
-            if (gapiReady && gapi.client) gapi.client.setToken({ access_token: state.gdriveToken });
-            popup.close();
-            updateGdriveStatus(true);
-            showToast('Google Drive に接続しました', 'success');
-            saveSettings();  // トークン保存（チェック ON なら）
-            loadGdriveFiles();
-          }
-        } catch (e) {
-          // クロスオリジンの間は無視
-        }
-      }, 500);
+      // 設定値を保存してからリダイレクト（戻ってきたとき復元できるように）
+      saveSettings();
+      // 同じウィンドウで Google 認証画面に移動
+      window.location.href = authUrl;
     }
 
     function updateGdriveStatus(connected) {
