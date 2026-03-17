@@ -285,7 +285,8 @@
       margin-bottom: 12px;
       outline: none;
     }
-    .settings-section input:focus { border-color: var(--accent); }
+    .settings-section input:focus,
+    .settings-section select:focus { border-color: var(--accent); }
 
     /* ===== 通知バナー ===== */
     .toast {
@@ -564,13 +565,20 @@
           </h3>
           <label>Personal Access Token</label>
           <input type="password" id="github-token" placeholder="ghp_xxxxxxxxxxxx">
-          <label>リポジトリ（owner/repo 形式）</label>
-          <input type="text" id="github-repo" placeholder="username/my-markdown-notes">
-          <label>ブランチ</label>
-          <input type="text" id="github-branch" placeholder="main" value="main">
-          <label>保存先パス（リポジトリ内のフォルダ）</label>
-          <input type="text" id="github-path" placeholder="docs/ （省略するとルート）">
-          <button class="btn btn-primary" onclick="connectGitHub()">接続テスト</button>
+          <button class="btn btn-primary" onclick="fetchGithubRepos()" id="btn-fetch-repos">リポジトリ一覧を取得</button>
+
+          <!-- PAT 入力後に表示されるリポジトリ選択エリア -->
+          <div id="github-repo-section" style="display:none;">
+            <label>Push 先リポジトリ（Private のみ表示）</label>
+            <select id="github-repo-select" onChange="onRepoSelected()">
+              <option value="">-- リポジトリを選択 --</option>
+            </select>
+            <label>ブランチ</label>
+            <input type="text" id="github-branch" placeholder="main" value="main">
+            <label>保存先パス（リポジトリ内のフォルダ）</label>
+            <input type="text" id="github-path" placeholder="docs/ （省略するとルート）">
+            <button class="btn btn-primary" onclick="connectGitHub()">接続する</button>
+          </div>
         </div>
 
         <!-- データ管理 -->
@@ -775,35 +783,111 @@
     }
 
     // ============================================================
-    // GitHub 接続テスト
+    // GitHub: PAT を使って Private リポジトリ一覧を取得
     // ============================================================
-    async function connectGitHub() {
+    async function fetchGithubRepos() {
       const token = document.getElementById('github-token').value.trim();
-      const repo = document.getElementById('github-repo').value.trim();
-      const branch = document.getElementById('github-branch').value.trim() || 'main';
-      const path = document.getElementById('github-path').value.trim();
-
-      if (!token || !repo) {
-        showToast('Token と リポジトリ名を入力してください', 'error');
+      if (!token) {
+        showToast('Personal Access Token を入力してください', 'error');
         return;
       }
 
-      state.githubToken = token;
+      const btn = document.getElementById('btn-fetch-repos');
+      btn.disabled = true;
+      btn.textContent = '取得中...';
+
+      try {
+        // Private リポジトリのみ取得（visibility=private）
+        // ページネーションで最大 200 件まで取得
+        let allRepos = [];
+        let page = 1;
+        while (page <= 2) {
+          const res = await fetch(
+            'https://api.github.com/user/repos?visibility=private&per_page=100&sort=updated&page=' + page,
+            { headers: { Authorization: 'token ' + token, Accept: 'application/vnd.github.v3+json' } }
+          );
+          if (!res.ok) throw new Error('認証失敗: Token が正しいか確認してください (' + res.status + ')');
+          const repos = await res.json();
+          if (repos.length === 0) break;
+          allRepos = allRepos.concat(repos);
+          page++;
+        }
+
+        if (allRepos.length === 0) {
+          showToast('Private リポジトリが見つかりません。先に GitHub で Private リポジトリを作成してください', 'warning');
+          return;
+        }
+
+        // メモリにトークンを保持
+        state.githubToken = token;
+
+        // ドロップダウンにリポジトリ一覧をセット
+        const select = document.getElementById('github-repo-select');
+        select.innerHTML = '<option value="">-- リポジトリを選択 (' + allRepos.length + ' 件) --</option>';
+        allRepos.forEach(repo => {
+          const opt = document.createElement('option');
+          opt.value = repo.full_name;
+          opt.textContent = repo.full_name + (repo.description ? '  — ' + repo.description : '');
+          select.appendChild(opt);
+        });
+
+        // リポジトリ選択セクションを表示
+        document.getElementById('github-repo-section').style.display = '';
+        showToast('Private リポジトリ ' + allRepos.length + ' 件を取得しました', 'success');
+      } catch (err) {
+        showToast('リポジトリ取得エラー: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'リポジトリ一覧を取得';
+      }
+    }
+
+    // ============================================================
+    // GitHub: ドロップダウンでリポジトリ選択時
+    // ============================================================
+    function onRepoSelected() {
+      const repo = document.getElementById('github-repo-select').value;
+      if (repo) {
+        state.githubRepo = repo;
+      }
+    }
+
+    // ============================================================
+    // GitHub: 選択したリポジトリに接続確定
+    // ============================================================
+    async function connectGitHub() {
+      const repo = document.getElementById('github-repo-select').value;
+      const branch = document.getElementById('github-branch').value.trim() || 'main';
+      const path = document.getElementById('github-path').value.trim();
+
+      if (!state.githubToken || !repo) {
+        showToast('Token の取得とリポジトリの選択を先に行ってください', 'error');
+        return;
+      }
+
       state.githubRepo = repo;
       state.githubBranch = branch;
       state.githubPath = path;
 
       try {
-        // リポジトリ情報を取得して接続テスト
+        // 選択したリポジトリに接続テスト
         const res = await fetch(
           'https://api.github.com/repos/' + repo,
-          { headers: { Authorization: 'token ' + token, Accept: 'application/vnd.github.v3+json' } }
+          { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
         );
         if (!res.ok) throw new Error('接続失敗: ' + res.status);
         const data = await res.json();
 
+        // Private であることを再確認（安全策）
+        if (!data.private) {
+          showToast('このリポジトリは Public です。セキュリティのため Private リポジトリのみ使用できます', 'error');
+          state.githubRepo = null;
+          updateGithubStatus(false);
+          return;
+        }
+
         updateGithubStatus(true);
-        showToast('GitHub に接続しました: ' + data.full_name, 'success');
+        showToast('GitHub に接続しました: ' + data.full_name + ' (Private)', 'success');
         loadGithubFiles();
       } catch (err) {
         updateGithubStatus(false);
@@ -818,7 +902,7 @@
         badge.innerHTML = '<span class="status-dot"></span>接続済み';
       } else {
         badge.className = 'status-badge disconnected';
-        badge.innerHTML = '<span class="status-dot"></span>未接綊';
+        badge.innerHTML = '<span class="status-dot"></span>未接続';
       }
     }
 
@@ -881,6 +965,23 @@
       const btn = document.getElementById('btn-push');
       btn.disabled = true;
       btn.textContent = 'Push 中...';
+
+      // 安全策: push 前にリポジトリが Private であることを再確認
+      try {
+        const chk = await fetch(
+          'https://api.github.com/repos/' + state.githubRepo,
+          { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+        );
+        if (chk.ok) {
+          const info = await chk.json();
+          if (!info.private) {
+            showToast('Public リポジトリへの push はブロックされました。Private リポジトリを選択してください', 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>Push';
+            return;
+          }
+        }
+      } catch (e) { /* ネットワークエラー時は push 処理側でキャッチ */ }
 
       try {
         const content = state.isEditing
@@ -1173,6 +1274,8 @@
       });
       document.querySelectorAll('.settings-section input').forEach(i => i.value = '');
       document.getElementById('github-branch').value = 'main';
+      document.getElementById('github-repo-select').innerHTML = '<option value="">-- リポジトリを選択 --</option>';
+      document.getElementById('github-repo-section').style.display = 'none';
       updateGdriveStatus(false);
       updateGithubStatus(false);
       renderFileList();
