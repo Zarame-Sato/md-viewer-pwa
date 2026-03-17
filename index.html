@@ -935,81 +935,55 @@
     }
 
     // ============================================================
-    // Google Drive: フォルダ名からフォルダIDを検索する
+    // 爆速ファイル一覧取得（API呼び出し最小化方式）
+    //
+    // 【戦略】フォルダを1個ずつ掘るBFSを完全に廃止。
+    //  ① 全フォルダ一覧を1回のAPIで取得
+    //  ② 全md/pdfファイル一覧を1回のAPIで取得
+    //  ③ メモリ上でフォルダツリーを組み立て、パスを逆引き
+    //
+    // API呼び出し: たった2回（+ ページネーション分）
+    // 所要時間: 1〜3秒
     // ============================================================
-    async function findDriveFolderIdByName(folderName, parentId) {
-      // parentId 配下で folderName に一致するフォルダを検索
-      let q = "mimeType='application/vnd.google-apps.folder' and name='" + folderName.replace(/'/g, "\\'") + "' and trashed=false";
-      if (parentId) q += " and '" + parentId + "' in parents";
-      const res = await fetch(
-        'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q) + '&fields=files(id,name)&pageSize=5',
-        { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
-      );
-      if (!res.ok) return null;
-      const data = await res.json();
-      return (data.files && data.files.length > 0) ? data.files[0].id : null;
-    }
 
-    // ============================================================
-    // Google Drive: 指定フォルダ配下の md/pdf を再帰取得（並列版）
-    // 1フォルダずつ直列 → 最大5フォルダ同時に並列でAPI呼び出し
-    // ============================================================
-    async function fetchFolderContents(folder) {
-      // 1つのフォルダの直下のファイル・サブフォルダを全ページ取得
-      const items = [];
+    // Drive API のページネーション付き全件取得ヘルパー
+    async function driveListAll(query, fields) {
+      const allFiles = [];
       let pageToken = null;
       do {
         let url = 'https://www.googleapis.com/drive/v3/files?' +
-          'q=' + encodeURIComponent("'" + folder.id + "' in parents and trashed=false") +
-          '&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size)' +
-          '&pageSize=200';
-        if (pageToken) url += '&pageToken=' + pageToken;
-        const res = await fetch(url, { headers: { Authorization: 'Bearer ' + state.gdriveToken } });
-        if (!res.ok) break;
+          'q=' + encodeURIComponent(query) +
+          '&fields=' + encodeURIComponent('nextPageToken,files(' + fields + ')') +
+          '&pageSize=1000';
+        if (pageToken) url += '&pageToken=' + encodeURIComponent(pageToken);
+        const res = await fetch(url, {
+          headers: { Authorization: 'Bearer ' + state.gdriveToken }
+        });
+        if (!res.ok) throw new Error('Drive API エラー: ' + res.status);
         const data = await res.json();
-        items.push(...(data.files || []));
+        allFiles.push(...(data.files || []));
         pageToken = data.nextPageToken || null;
       } while (pageToken);
-      return { folder, items };
+      return allFiles;
     }
 
-    async function listFilesInFolder(folderId, folderName) {
-      const allFiles = [];
-      let queue = [{ id: folderId, pathPrefix: folderName }];
-      const PARALLEL = 5; // 同時にAPIを叩くフォルダ数
-
-      while (queue.length > 0) {
-        // キューから最大 PARALLEL 個を取り出して同時に処理
-        const batch = queue.splice(0, PARALLEL);
-        const results = await Promise.all(batch.map(f => fetchFolderContents(f)));
-
-        for (const { folder, items } of results) {
-          for (const f of items) {
-            if (f.mimeType === 'application/vnd.google-apps.folder') {
-              const subPath = folder.pathPrefix ? folder.pathPrefix + '/' + f.name : f.name;
-              queue.push({ id: f.id, pathPrefix: subPath });
-            } else if (f.name.endsWith('.md') || f.name.endsWith('.pdf') ||
-                       f.mimeType === 'text/markdown' || f.mimeType === 'application/pdf') {
-              const filePath = folder.pathPrefix ? folder.pathPrefix + '/' + f.name : f.name;
-              allFiles.push({
-                id: f.id,
-                name: f.name,
-                drivePath: filePath,
-                modifiedTime: f.modifiedTime,
-                size: f.size,
-                source: 'gdrive'
-              });
-            }
-          }
-        }
+    // フォルダID → フルパスを逆引きする（メモリ上で高速）
+    function buildPathForFile(parentId, folderMap, rootId) {
+      const parts = [];
+      let current = parentId;
+      let safety = 20; // 無限ループ防止
+      while (current && safety-- > 0) {
+        if (current === rootId) break; // ルートに到達
+        const folder = folderMap.get(current);
+        if (!folder) break; // マイドライブ直下など
+        parts.unshift(folder.name);
+        current = folder.parentId;
       }
-      return allFiles;
+      return parts.join('/');
     }
 
     // ============================================================
     // ファイル一覧キャッシュ（localStorage）
-    // 2回目以降の起動はキャッシュから瞬時に表示し、
-    // バックグラウンドで最新を取得して差分更新する
     // ============================================================
     const FILE_CACHE_KEY = 'mdviewer_file_cache';
 
@@ -1027,16 +1001,13 @@
         const raw = localStorage.getItem(FILE_CACHE_KEY);
         if (!raw) return null;
         const cache = JSON.parse(raw);
-        // 24時間以上古いキャッシュは無視
         if (Date.now() - cache.timestamp > 24 * 60 * 60 * 1000) return null;
         return cache.files || null;
       } catch (e) { return null; }
     }
 
     // ============================================================
-    // Google Drive ファイル一覧取得（キャッシュ＋並列BFS版）
-    // ① キャッシュがあれば即表示
-    // ② バックグラウンドで最新を取得 → 差分更新
+    // Google Drive ファイル一覧取得（キャッシュ + 爆速2クエリ方式）
     // ============================================================
     async function loadGdriveFiles() {
       if (!state.gdriveToken) return;
@@ -1046,7 +1017,7 @@
       if (cached && cached.length > 0) {
         state.files = cached;
         renderFileList();
-        // バックグラウンドで最新取得（スピナーなし）
+        // バックグラウンドで最新取得
         fetchLatestDriveFiles().then(freshFiles => {
           if (freshFiles && freshFiles.length > 0) {
             state.files = freshFiles;
@@ -1057,7 +1028,7 @@
         return;
       }
 
-      // ② キャッシュなし → 通常の取得（スピナー表示中）
+      // ② キャッシュなし → 取得
       try {
         const files = await fetchLatestDriveFiles();
         if (files) {
@@ -1071,44 +1042,65 @@
       }
     }
 
-    // 実際の Drive API 呼び出し（キャッシュとは独立）
+    // 爆速版: 全フォルダ + 全ファイルを2クエリで取得してパス組み立て
     async function fetchLatestDriveFiles() {
-      const mappingFolders = Object.keys(state.repoMappings);
-      let driveFiles = [];
+      // ── 2つのクエリを同時に発行（並列） ──
+      const [allFolders, allTargetFiles] = await Promise.all([
+        // ① Drive 内の全フォルダ（id, name, parents）
+        driveListAll(
+          "mimeType='application/vnd.google-apps.folder' and trashed=false",
+          'id,name,parents'
+        ),
+        // ② Drive 内の全 md/pdf ファイル
+        driveListAll(
+          "(fileExtension='md' or mimeType='text/markdown' or fileExtension='pdf' or mimeType='application/pdf') and trashed=false",
+          'id,name,mimeType,modifiedTime,size,parents'
+        )
+      ]);
 
-      if (mappingFolders.length > 0) {
-        // マッピング済みフォルダだけを対象に検索
-        const folderPromises = mappingFolders.map(async (folderName) => {
-          const folderId = await findDriveFolderIdByName(folderName, state.gdriveFolderId || null);
-          if (!folderId) return [];
-          return await listFilesInFolder(folderId, folderName);
+      // ── フォルダIDマップを構築（メモリ上） ──
+      const folderMap = new Map();
+      for (const f of allFolders) {
+        folderMap.set(f.id, {
+          name: f.name,
+          parentId: (f.parents && f.parents[0]) || null
         });
-        const results = await Promise.all(folderPromises);
-        driveFiles = results.flat();
-      } else if (state.gdriveFolderId) {
-        // マッピング未設定だがルートフォルダ指定あり → BFS で階層取得
-        driveFiles = await listFilesInFolder(state.gdriveFolderId, '');
-      } else {
-        // ルートフォルダも未設定 → Drive 全体からフラット検索
-        const query = "mimeType='text/markdown' or fileExtension='md' or mimeType='application/pdf' or fileExtension='pdf'";
-        const res = await fetch(
-          'https://www.googleapis.com/drive/v3/files?' +
-          'q=' + encodeURIComponent(query) +
-          '&fields=files(id,name,modifiedTime,size,parents)' +
-          '&orderBy=modifiedTime desc' +
-          '&pageSize=200',
-          { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
-        );
-        if (!res.ok) throw new Error('Drive API エラー: ' + res.status);
-        const data = await res.json();
-        driveFiles = (data.files || []).map(f => ({
+      }
+
+      // ── ルートフォルダIDの判定 ──
+      const rootId = state.gdriveFolderId || null;
+
+      // ── ファイルごとにフルパスを組み立て ──
+      const driveFiles = [];
+      for (const f of allTargetFiles) {
+        const parentId = (f.parents && f.parents[0]) || null;
+
+        // ルートフォルダ指定がある場合: そのフォルダ配下のファイルだけに絞る
+        if (rootId) {
+          // このファイルの親チェーンにルートフォルダが含まれるか確認
+          let current = parentId;
+          let isUnderRoot = false;
+          let safety = 20;
+          while (current && safety-- > 0) {
+            if (current === rootId) { isUnderRoot = true; break; }
+            const folder = folderMap.get(current);
+            if (!folder) break;
+            current = folder.parentId;
+          }
+          if (!isUnderRoot) continue; // ルート外のファイルはスキップ
+        }
+
+        const folderPath = buildPathForFile(parentId, folderMap, rootId);
+        const drivePath = folderPath ? folderPath + '/' + f.name : f.name;
+
+        driveFiles.push({
           id: f.id,
           name: f.name,
-          drivePath: f.name,
+          drivePath: drivePath,
           modifiedTime: f.modifiedTime,
           size: f.size,
           source: 'gdrive'
-        }));
+        });
       }
 
       // 更新日時で降順ソート
