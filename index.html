@@ -1,0 +1,1371 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#3b82f6">
+  <title>MD Viewer</title>
+  <link rel="manifest" href="./manifest.json">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192x192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="./icons/icon-512x512.png">
+
+  <!-- ===== 外部ライブラリ ===== -->
+  <!-- Markdown → HTML 変換 -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- コードのシンタックスハイライト -->
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/highlight.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css">
+  <!-- Mermaid 図表 -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <!-- 数式 (LaTeX) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js"></script>
+
+  <style>
+    /* ===== CSS リセット & 基本設定 ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f172a;
+      --bg-surface: #1e293b;
+      --bg-hover: #334155;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --border: #334155;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --radius: 12px;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-text-size-adjust: 100%;
+      overflow: hidden;
+    }
+
+    /* ===== アプリ全体のレイアウト ===== */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      padding-top: var(--safe-top);
+      padding-bottom: var(--safe-bottom);
+    }
+
+    /* ===== ヘッダー ===== */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      min-height: 56px;
+      flex-shrink: 0;
+    }
+    header h1 {
+      font-size: 18px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    header h1 .logo {
+      width: 28px; height: 28px;
+      background: var(--accent);
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 800; color: white;
+    }
+    .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    /* ===== ボタン共通 ===== */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      color: white;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn-primary { background: var(--accent); }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary { background: var(--bg-hover); color: var(--text); }
+    .btn-secondary:hover { background: #475569; }
+    .btn-success { background: var(--success); }
+    .btn-danger { background: var(--danger); }
+    .btn-icon {
+      width: 40px; height: 40px;
+      padding: 0; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg-hover);
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ===== メインコンテンツ ===== */
+    main {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* ===== 画面 (Pages) ===== */
+    .page {
+      position: absolute;
+      inset: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 16px;
+      display: none;
+    }
+    .page.active { display: block; }
+
+    /* ===== ファイル一覧 ===== */
+    .file-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .file-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      background: var(--bg-surface);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 0.15s;
+      border: 1px solid var(--border);
+    }
+    .file-item:hover, .file-item:active { background: var(--bg-hover); }
+    .file-icon {
+      width: 40px; height: 40px;
+      background: var(--accent);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; font-weight: 700; color: white;
+      flex-shrink: 0;
+    }
+    .file-info { flex: 1; min-width: 0; }
+    .file-name {
+      font-size: 15px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .file-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* ===== Markdown 表示エリア ===== */
+    .md-viewer {
+      max-width: 800px;
+      margin: 0 auto;
+      line-height: 1.8;
+      font-size: 16px;
+    }
+    .md-viewer h1 { font-size: 28px; font-weight: 800; margin: 32px 0 16px; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
+    .md-viewer h2 { font-size: 22px; font-weight: 700; margin: 28px 0 12px; color: var(--accent); }
+    .md-viewer h3 { font-size: 18px; font-weight: 700; margin: 24px 0 10px; }
+    .md-viewer h4, .md-viewer h5, .md-viewer h6 { font-size: 16px; font-weight: 700; margin: 20px 0 8px; }
+    .md-viewer p { margin: 12px 0; }
+    .md-viewer a { color: var(--accent); text-decoration: none; }
+    .md-viewer a:hover { text-decoration: underline; }
+    .md-viewer img { max-width: 100%; border-radius: 8px; margin: 12px 0; }
+    .md-viewer blockquote {
+      border-left: 4px solid var(--accent);
+      padding: 8px 16px;
+      margin: 12px 0;
+      background: rgba(59, 130, 246, 0.08);
+      border-radius: 0 8px 8px 0;
+      color: var(--text-muted);
+    }
+    .md-viewer pre {
+      background: #0d1117;
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      margin: 12px 0;
+      border: 1px solid var(--border);
+    }
+    .md-viewer code {
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 14px;
+    }
+    .md-viewer :not(pre) > code {
+      background: var(--bg-hover);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .md-viewer ul, .md-viewer ol { padding-left: 24px; margin: 12px 0; }
+    .md-viewer li { margin: 6px 0; }
+    .md-viewer table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 14px;
+    }
+    .md-viewer th, .md-viewer td {
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      text-align: left;
+    }
+    .md-viewer th { background: var(--bg-surface); font-weight: 700; }
+    .md-viewer hr { border: none; border-top: 2px solid var(--border); margin: 24px 0; }
+    .md-viewer .task-list-item { list-style: none; margin-left: -20px; }
+    .md-viewer .task-list-item input { margin-right: 8px; }
+
+    /* Mermaid 図の表示 */
+    .mermaid-container {
+      background: #1a1a2e;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 12px 0;
+      overflow-x: auto;
+      text-align: center;
+    }
+
+    /* KaTeX 数式 */
+    .katex-display { margin: 16px 0; overflow-x: auto; }
+
+    /* ===== 設定画面 ===== */
+    .settings-section {
+      background: var(--bg-surface);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 16px;
+      border: 1px solid var(--border);
+    }
+    .settings-section h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .settings-section label {
+      display: block;
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    .settings-section input[type="text"],
+    .settings-section input[type="password"],
+    .settings-section select {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 15px;
+      margin-bottom: 12px;
+      outline: none;
+    }
+    .settings-section input:focus,
+    .settings-section select:focus { border-color: var(--accent); }
+
+    /* ===== 通知バナー ===== */
+    .toast {
+      position: fixed;
+      bottom: calc(80px + var(--safe-bottom));
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      z-index: 9999;
+      transition: transform 0.3s ease;
+      max-width: 90%;
+      text-align: center;
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+    .toast.success { background: var(--success); color: white; }
+    .toast.error { background: var(--danger); color: white; }
+    .toast.info { background: var(--accent); color: white; }
+
+    /* ===== 下部ナビゲーション ===== */
+    nav {
+      display: flex;
+      border-top: 1px solid var(--border);
+      background: var(--bg-surface);
+      flex-shrink: 0;
+    }
+    nav button {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 10px 0;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: color 0.15s;
+    }
+    nav button.active { color: var(--accent); }
+    nav button svg { width: 22px; height: 22px; }
+
+    /* ===== ビューア ヘッダー ===== */
+    .viewer-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .viewer-header .back-btn {
+      width: 36px; height: 36px;
+      background: var(--bg-hover);
+      border: none; border-radius: 8px;
+      color: var(--text);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .viewer-header .title {
+      flex: 1;
+      font-size: 16px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ===== ローディング ===== */
+    .loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+      gap: 12px;
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ===== 空状態 ===== */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 20px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+    .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+    .empty-state p { font-size: 14px; line-height: 1.6; }
+
+    /* ===== エディタ ===== */
+    .editor-area {
+      width: 100%;
+      min-height: 300px;
+      padding: 16px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 14px;
+      line-height: 1.6;
+      resize: vertical;
+      outline: none;
+    }
+    .editor-area:focus { border-color: var(--accent); }
+
+    /* ===== タブ切替 ===== */
+    .tab-bar {
+      display: flex;
+      gap: 4px;
+      background: var(--bg);
+      padding: 4px;
+      border-radius: 10px;
+      margin-bottom: 16px;
+    }
+    .tab-bar button {
+      flex: 1;
+      padding: 8px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      background: transparent;
+      color: var(--text-muted);
+      transition: all 0.15s;
+    }
+    .tab-bar button.active {
+      background: var(--accent);
+      color: white;
+    }
+
+    /* ===== 検索バー ===== */
+    .search-bar {
+      position: relative;
+      margin-bottom: 16px;
+    }
+    .search-bar input {
+      width: 100%;
+      padding: 10px 14px 10px 40px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 15px;
+      outline: none;
+    }
+    .search-bar input:focus { border-color: var(--accent); }
+    .search-bar svg {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 18px;
+      height: 18px;
+      color: var(--text-muted);
+    }
+
+    /* ===== 接続ステータス ===== */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .status-badge.connected { background: rgba(34,197,94,0.15); color: var(--success); }
+    .status-badge.disconnected { background: rgba(239,68,68,0.15); color: var(--danger); }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+    }
+    .status-badge.connected .status-dot { background: var(--success); }
+    .status-badge.disconnected .status-dot { background: var(--danger); }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- ===== ヘッダー ===== -->
+    <header>
+      <h1><span class="logo">MD</span> MD Viewer</h1>
+      <div class="header-actions">
+        <button class="btn-icon" onclick="refreshFiles()" title="更新">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ===== メインコンテンツ ===== -->
+    <main>
+      <!-- ファイル一覧ページ -->
+      <div id="page-files" class="page active">
+        <div class="search-bar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input type="text" placeholder="ファイル名で検索..." oninput="filterFiles(this.value)">
+        </div>
+        <div id="file-list" class="file-list">
+          <div class="empty-state">
+            <div class="icon">📂</div>
+            <p>設定画面から Google Drive と GitHub を接続してください</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ビューアページ -->
+      <div id="page-viewer" class="page">
+        <div class="viewer-header">
+          <button class="back-btn" onclick="showPage('files')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+          </button>
+          <span class="title" id="viewer-title">-</span>
+          <button class="btn btn-secondary" onclick="toggleEdit()" id="btn-edit">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            編集
+          </button>
+          <button class="btn btn-success" onclick="pushToGitHub()" id="btn-push">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+            Push
+          </button>
+        </div>
+        <div class="tab-bar" id="edit-tabs" style="display:none;">
+          <button class="active" onclick="switchTab('preview')">プレビュー</button>
+          <button onclick="switchTab('source')">ソース</button>
+        </div>
+        <div id="viewer-content" class="md-viewer"></div>
+        <textarea id="editor-content" class="editor-area" style="display:none;"></textarea>
+      </div>
+
+      <!-- 設定ページ -->
+      <div id="page-settings" class="page">
+        <h2 style="font-size:20px; margin-bottom:20px;">設定</h2>
+
+        <!-- Google Drive 設定 -->
+        <div class="settings-section">
+          <h3>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 19.5h20L12 2z"/></svg>
+            Google Drive
+            <span id="gdrive-status" class="status-badge disconnected" style="margin-left:auto;">
+              <span class="status-dot"></span>未接続
+            </span>
+          </h3>
+          <label>Client ID <span style="font-size:11px;color:var(--text-muted);">（設定済み・変更不要）</span></label>
+          <input type="text" id="gdrive-client-id" value="975677173358-i3rdoqc0je229uobr9cqq1sb63ett2pp.apps.googleusercontent.com" style="font-size:12px;color:var(--text-muted);">
+          <label>フォルダID <span style="font-size:11px;color:var(--text-muted);">（空欄＝Google Drive 全体から検索）</span></label>
+          <input type="text" id="gdrive-folder-id" placeholder="省略するとルートフォルダを検索">
+          <button class="btn btn-primary" onclick="connectGoogleDrive()" id="btn-gdrive-connect">Google Drive に接続</button>
+        </div>
+
+        <!-- GitHub 設定 -->
+        <div class="settings-section">
+          <h3>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+            GitHub
+            <span id="github-status" class="status-badge disconnected" style="margin-left:auto;">
+              <span class="status-dot"></span>未接続
+            </span>
+          </h3>
+          <form id="github-pat-form" onsubmit="event.preventDefault(); fetchGithubRepos();" autocomplete="on">
+            <label>Personal Access Token <span style="font-size:11px;color:var(--text-muted);">（GitHub で発行した ghp_ で始まるトークン）</span></label>
+            <input type="hidden" name="username" autocomplete="username" value="md-viewer-pwa">
+            <input type="password" id="github-token" name="password" autocomplete="current-password" placeholder="ghp_xxxxxxxxxxxx">
+            <button type="submit" class="btn btn-primary" id="btn-fetch-repos">リポジトリ一覧を取得</button>
+          </form>
+
+          <!-- PAT 入力後に表示されるリポジトリ選択エリア -->
+          <div id="github-repo-section" style="display:none;">
+            <label>Push 先リポジトリ（Private のみ表示）</label>
+            <select id="github-repo-select" onchange="onRepoSelected()">
+              <option value="">-- リポジトリを選択 --</option>
+            </select>
+            <label>ブランチ</label>
+            <input type="text" id="github-branch" placeholder="main" value="main">
+            <label>保存先パス（リポジトリ内のフォルダ）</label>
+            <input type="text" id="github-path" placeholder="docs/ （省略するとルート）">
+            <button class="btn btn-primary" onclick="connectGitHub()">接続する</button>
+          </div>
+        </div>
+
+        <!-- データ管理 -->
+        <div class="settings-section">
+          <h3>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            データ管理
+          </h3>
+          <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+            リポジトリ名やブランチなどの設定はブラウザに保存されます。
+            トークンは Chrome のパスワード保存機能で管理できます。
+          </p>
+          <button class="btn btn-danger" onclick="clearAllSettings()">設定をクリア</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- ===== 下部ナビゲーション ===== -->
+    <nav>
+      <button class="active" onclick="showPage('files')" id="nav-files">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+        ファイル
+      </button>
+      <button onclick="showPage('settings')" id="nav-settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        設定
+      </button>
+    </nav>
+
+    <!-- 通知 -->
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <script>
+    // ============================================================
+    // アプリ全体の状態
+    // トークン類: メモリのみ（Chrome パスワード保存で管理）
+    // 設定値: localStorage に保存して次回起動時に復元
+    // ============================================================
+    const savedSettings = JSON.parse(localStorage.getItem('mdviewer_settings') || '{}');
+    const state = {
+      // Google Drive
+      gdriveToken: null,       // OAuth アクセストークン（メモリのみ）
+      gdriveClientId: savedSettings.gdriveClientId || null,
+      gdriveFolderId: savedSettings.gdriveFolderId || null,
+
+      // GitHub
+      githubToken: null,       // PAT（メモリのみ、Chrome パスワード保存で管理）
+      githubRepo: savedSettings.githubRepo || null,
+      githubBranch: savedSettings.githubBranch || 'main',
+      githubPath: savedSettings.githubPath || '',
+
+      // ファイル
+      files: [],               // { id, name, modifiedTime, source: 'gdrive'|'github' }
+      currentFile: null,       // 現在開いているファイル
+      currentContent: '',      // Markdown ソース
+      isEditing: false,
+
+      // Google Drive OAuth 用
+      gdriveApiKey: null,
+    };
+
+    // ============================================================
+    // localStorage への設定保存（トークン以外の設定のみ）
+    // ============================================================
+    function saveSettings() {
+      const data = {
+        gdriveClientId: state.gdriveClientId,
+        gdriveFolderId: state.gdriveFolderId,
+        githubRepo: state.githubRepo,
+        githubBranch: state.githubBranch,
+        githubPath: state.githubPath
+      };
+      localStorage.setItem('mdviewer_settings', JSON.stringify(data));
+    }
+
+    // 起動時にフォーム欄を復元
+    (function restoreSettings() {
+      // Client ID（デフォルト値があるので、保存値があればそちらを使う）
+      if (savedSettings.gdriveClientId) {
+        document.getElementById('gdrive-client-id').value = savedSettings.gdriveClientId;
+      }
+      if (savedSettings.gdriveFolderId) {
+        document.getElementById('gdrive-folder-id').value = savedSettings.gdriveFolderId;
+      }
+      if (savedSettings.githubBranch) {
+        document.getElementById('github-branch').value = savedSettings.githubBranch;
+      }
+      if (savedSettings.githubPath) {
+        document.getElementById('github-path').value = savedSettings.githubPath;
+      }
+    })();
+
+    // ============================================================
+    // ページ切替
+    // ============================================================
+    function showPage(name) {
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.getElementById('page-' + name).classList.add('active');
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      const navBtn = document.getElementById('nav-' + name);
+      if (navBtn) navBtn.classList.add('active');
+
+      // ビューアページに戻る場合は files ナビをアクティブにしない
+      if (name === 'viewer') {
+        document.getElementById('nav-files').classList.add('active');
+      }
+    }
+
+    // ============================================================
+    // 通知表示
+    // ============================================================
+    function showToast(message, type = 'info') {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = 'toast ' + type + ' show';
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    // ============================================================
+    // Google Drive 接続（OAuth2 Implicit Flow）
+    // ============================================================
+    function connectGoogleDrive() {
+      const clientId = document.getElementById('gdrive-client-id').value.trim();
+      if (!clientId) {
+        showToast('Client ID を入力してください', 'error');
+        return;
+      }
+      state.gdriveClientId = clientId;
+      state.gdriveFolderId = document.getElementById('gdrive-folder-id').value.trim();
+      saveSettings();  // Client ID・フォルダIDを保存
+
+      // OAuth2 Implicit Flow（リダイレクトなし、ポップアップ使用）
+      const redirectUri = window.location.origin + window.location.pathname;
+      const scope = 'https://www.googleapis.com/auth/drive.readonly';
+      const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' +
+        'client_id=' + encodeURIComponent(clientId) +
+        '&redirect_uri=' + encodeURIComponent(redirectUri) +
+        '&response_type=token' +
+        '&scope=' + encodeURIComponent(scope) +
+        '&prompt=consent';
+
+      // ポップアップで認証
+      const popup = window.open(authUrl, 'gdrive-auth', 'width=500,height=600');
+      if (!popup) {
+        showToast('ポップアップがブロックされました。許可してください', 'error');
+        return;
+      }
+
+      // ポップアップからトークンを受け取る
+      const timer = setInterval(() => {
+        try {
+          if (popup.closed) {
+            clearInterval(timer);
+            return;
+          }
+          const url = popup.location.href;
+          if (url.includes('access_token=')) {
+            clearInterval(timer);
+            const hash = popup.location.hash.substring(1);
+            const params = new URLSearchParams(hash);
+            state.gdriveToken = params.get('access_token');
+            popup.close();
+            updateGdriveStatus(true);
+            showToast('Google Drive に接続しました', 'success');
+            loadGdriveFiles();
+          }
+        } catch (e) {
+          // クロスオリジンの間は無視
+        }
+      }, 500);
+    }
+
+    function updateGdriveStatus(connected) {
+      const badge = document.getElementById('gdrive-status');
+      if (connected) {
+        badge.className = 'status-badge connected';
+        badge.innerHTML = '<span class="status-dot"></span>接続済み';
+      } else {
+        badge.className = 'status-badge disconnected';
+        badge.innerHTML = '<span class="status-dot"></span>未接続';
+      }
+    }
+
+    // ============================================================
+    // Google Drive ファイル一覧取得
+    // ============================================================
+    async function loadGdriveFiles() {
+      if (!state.gdriveToken) return;
+
+      let query = "mimeType='text/markdown' or fileExtension='md'";
+      if (state.gdriveFolderId) {
+        query = `'${state.gdriveFolderId}' in parents and (${query})`;
+      }
+
+      try {
+        const res = await fetch(
+          'https://www.googleapis.com/drive/v3/files?' +
+          'q=' + encodeURIComponent(query) +
+          '&fields=files(id,name,modifiedTime,size)' +
+          '&orderBy=modifiedTime desc' +
+          '&pageSize=100',
+          { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+        );
+        if (!res.ok) throw new Error('Drive API エラー: ' + res.status);
+        const data = await res.json();
+
+        const driveFiles = (data.files || []).map(f => ({
+          id: f.id,
+          name: f.name,
+          modifiedTime: f.modifiedTime,
+          size: f.size,
+          source: 'gdrive'
+        }));
+
+        // 既存の github ファイルとマージ
+        state.files = [
+          ...driveFiles,
+          ...state.files.filter(f => f.source === 'github')
+        ];
+        renderFileList();
+      } catch (err) {
+        showToast('ファイル一覧の取得に失敗: ' + err.message, 'error');
+      }
+    }
+
+    // ============================================================
+    // Google Drive ファイル内容取得
+    // ============================================================
+    async function loadGdriveFileContent(fileId) {
+      const res = await fetch(
+        'https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media',
+        { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+      );
+      if (!res.ok) throw new Error('ファイル読み込みエラー: ' + res.status);
+      return await res.text();
+    }
+
+    // ============================================================
+    // GitHub: PAT を使って Private リポジトリ一覧を取得
+    // ============================================================
+    async function fetchGithubRepos() {
+      const token = document.getElementById('github-token').value.trim();
+      if (!token) {
+        showToast('Personal Access Token を入力してください', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('btn-fetch-repos');
+      btn.disabled = true;
+      btn.textContent = '取得中...';
+
+      try {
+        // Private リポジトリのみ取得（visibility=private）
+        // ページネーションで最大 200 件まで取得
+        let allRepos = [];
+        let page = 1;
+        while (page <= 2) {
+          const res = await fetch(
+            'https://api.github.com/user/repos?visibility=private&per_page=100&sort=updated&page=' + page,
+            { headers: { Authorization: 'token ' + token, Accept: 'application/vnd.github.v3+json' } }
+          );
+          if (!res.ok) throw new Error('認証失敗: Token が正しいか確認してください (' + res.status + ')');
+          const repos = await res.json();
+          if (repos.length === 0) break;
+          allRepos = allRepos.concat(repos);
+          page++;
+        }
+
+        if (allRepos.length === 0) {
+          showToast('Private リポジトリが見つかりません。先に GitHub で Private リポジトリを作成してください', 'warning');
+          return;
+        }
+
+        // メモリにトークンを保持
+        state.githubToken = token;
+
+        // ドロップダウンにリポジトリ一覧をセット
+        const select = document.getElementById('github-repo-select');
+        select.innerHTML = '<option value="">-- リポジトリを選択 (' + allRepos.length + ' 件) --</option>';
+        allRepos.forEach(repo => {
+          const opt = document.createElement('option');
+          opt.value = repo.full_name;
+          opt.textContent = repo.full_name + (repo.description ? '  — ' + repo.description : '');
+          select.appendChild(opt);
+        });
+
+        // リポジトリ選択セクションを表示
+        document.getElementById('github-repo-section').style.display = '';
+        showToast('Private リポジトリ ' + allRepos.length + ' 件を取得しました', 'success');
+      } catch (err) {
+        showToast('リポジトリ取得エラー: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'リポジトリ一覧を取得';
+      }
+    }
+
+    // ============================================================
+    // GitHub: ドロップダウンでリポジトリ選択時
+    // ============================================================
+    function onRepoSelected() {
+      const repo = document.getElementById('github-repo-select').value;
+      if (repo) {
+        state.githubRepo = repo;
+      }
+    }
+
+    // ============================================================
+    // GitHub: 選択したリポジトリに接続確定
+    // ============================================================
+    async function connectGitHub() {
+      const repo = document.getElementById('github-repo-select').value;
+      const branch = document.getElementById('github-branch').value.trim() || 'main';
+      const path = document.getElementById('github-path').value.trim();
+
+      if (!state.githubToken || !repo) {
+        showToast('Token の取得とリポジトリの選択を先に行ってください', 'error');
+        return;
+      }
+
+      state.githubRepo = repo;
+      state.githubBranch = branch;
+      state.githubPath = path;
+
+      try {
+        // 選択したリポジトリに接続テスト
+        const res = await fetch(
+          'https://api.github.com/repos/' + repo,
+          { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+        );
+        if (!res.ok) throw new Error('接続失敗: ' + res.status);
+        const data = await res.json();
+
+        // Private であることを再確認（安全策）
+        if (!data.private) {
+          showToast('このリポジトリは Public です。セキュリティのため Private リポジトリのみ使用できます', 'error');
+          state.githubRepo = null;
+          updateGithubStatus(false);
+          return;
+        }
+
+        updateGithubStatus(true);
+        saveSettings();  // リポジトリ名・ブランチ・パスを保存
+        showToast('GitHub に接続しました: ' + data.full_name + ' (Private)', 'success');
+        loadGithubFiles();
+      } catch (err) {
+        updateGithubStatus(false);
+        showToast('GitHub 接続エラー: ' + err.message, 'error');
+      }
+    }
+
+    function updateGithubStatus(connected) {
+      const badge = document.getElementById('github-status');
+      if (connected) {
+        badge.className = 'status-badge connected';
+        badge.innerHTML = '<span class="status-dot"></span>接続済み';
+      } else {
+        badge.className = 'status-badge disconnected';
+        badge.innerHTML = '<span class="status-dot"></span>未接続';
+      }
+    }
+
+    // ============================================================
+    // GitHub ファイル一覧取得
+    // ============================================================
+    async function loadGithubFiles() {
+      if (!state.githubToken || !state.githubRepo) return;
+
+      try {
+        const path = state.githubPath || '';
+        const res = await fetch(
+          'https://api.github.com/repos/' + state.githubRepo + '/contents/' + path + '?ref=' + state.githubBranch,
+          { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+        );
+        if (!res.ok) throw new Error('GitHub API エラー: ' + res.status);
+        const items = await res.json();
+
+        const ghFiles = items
+          .filter(item => item.type === 'file' && item.name.endsWith('.md'))
+          .map(item => ({
+            id: item.sha,
+            name: item.name,
+            path: item.path,
+            sha: item.sha,
+            download_url: item.download_url,
+            source: 'github'
+          }));
+
+        // 既存の gdrive ファイルとマージ
+        state.files = [
+          ...state.files.filter(f => f.source === 'gdrive'),
+          ...ghFiles
+        ];
+        renderFileList();
+      } catch (err) {
+        showToast('GitHub ファイル一覧エラー: ' + err.message, 'error');
+      }
+    }
+
+    // ============================================================
+    // GitHub ファイル内容取得
+    // ============================================================
+    async function loadGithubFileContent(file) {
+      const res = await fetch(file.download_url);
+      if (!res.ok) throw new Error('ファイル読み込みエラー');
+      return await res.text();
+    }
+
+    // ============================================================
+    // GitHub に push（commit & push）
+    // ============================================================
+    async function pushToGitHub() {
+      if (!state.githubToken || !state.githubRepo) {
+        showToast('GitHub が未接続です。設定画面で接続してください', 'error');
+        return;
+      }
+      if (!state.currentFile) return;
+
+      const btn = document.getElementById('btn-push');
+      btn.disabled = true;
+      btn.textContent = 'Push 中...';
+
+      // 安全策: push 前にリポジトリが Private であることを再確認
+      try {
+        const chk = await fetch(
+          'https://api.github.com/repos/' + state.githubRepo,
+          { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+        );
+        if (chk.ok) {
+          const info = await chk.json();
+          if (!info.private) {
+            showToast('Public リポジトリへの push はブロックされました。Private リポジトリを選択してください', 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>Push';
+            return;
+          }
+        }
+      } catch (e) { /* ネットワークエラー時は push 処理側でキャッチ */ }
+
+      try {
+        const content = state.isEditing
+          ? document.getElementById('editor-content').value
+          : state.currentContent;
+
+        const filePath = state.githubPath
+          ? state.githubPath.replace(/\/$/, '') + '/' + state.currentFile.name
+          : state.currentFile.name;
+
+        // 1. 現在のファイルの SHA を取得（更新の場合に必要）
+        let sha = null;
+        try {
+          const existing = await fetch(
+            'https://api.github.com/repos/' + state.githubRepo + '/contents/' + filePath + '?ref=' + state.githubBranch,
+            { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+          );
+          if (existing.ok) {
+            const data = await existing.json();
+            sha = data.sha;
+          }
+        } catch (e) { /* 新規ファイルの場合は SHA 不要 */ }
+
+        // 2. ファイルを commit & push
+        const body = {
+          message: 'Update ' + state.currentFile.name + ' via MD Viewer PWA',
+          content: btoa(unescape(encodeURIComponent(content))),
+          branch: state.githubBranch
+        };
+        if (sha) body.sha = sha;
+
+        const res = await fetch(
+          'https://api.github.com/repos/' + state.githubRepo + '/contents/' + filePath,
+          {
+            method: 'PUT',
+            headers: {
+              Authorization: 'token ' + state.githubToken,
+              Accept: 'application/vnd.github.v3+json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(body)
+          }
+        );
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.message || res.status);
+        }
+
+        showToast('GitHub に push しました', 'success');
+      } catch (err) {
+        showToast('Push 失敗: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>Push';
+      }
+    }
+
+    // ============================================================
+    // ファイル一覧の描画
+    // ============================================================
+    function renderFileList(filter = '') {
+      const container = document.getElementById('file-list');
+      let files = state.files;
+
+      if (filter) {
+        const lower = filter.toLowerCase();
+        files = files.filter(f => f.name.toLowerCase().includes(lower));
+      }
+
+      if (files.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">📄</div>
+            <p>${state.gdriveToken || state.githubToken
+              ? '.md ファイルが見つかりません'
+              : '設定画面から Google Drive と GitHub を接続してください'}</p>
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = files.map((f, i) => {
+        const sourceIcon = f.source === 'gdrive' ? '📁' : '🐙';
+        const sourceLabel = f.source === 'gdrive' ? 'Google Drive' : 'GitHub';
+        const date = f.modifiedTime
+          ? new Date(f.modifiedTime).toLocaleDateString('ja-JP')
+          : '';
+        return `
+          <div class="file-item" onclick="openFile(${i})">
+            <div class="file-icon">MD</div>
+            <div class="file-info">
+              <div class="file-name">${escapeHtml(f.name)}</div>
+              <div class="file-meta">${sourceIcon} ${sourceLabel}${date ? ' ・ ' + date : ''}</div>
+            </div>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-muted);flex-shrink:0;"><path d="m9 18 6-6-6-6"/></svg>
+          </div>`;
+      }).join('');
+    }
+
+    function filterFiles(query) {
+      renderFileList(query);
+    }
+
+    // ============================================================
+    // ファイルを開く
+    // ============================================================
+    async function openFile(index) {
+      const file = state.files[index];
+      if (!file) return;
+
+      state.currentFile = file;
+      state.isEditing = false;
+      document.getElementById('viewer-title').textContent = file.name;
+      document.getElementById('viewer-content').innerHTML = '<div class="loading"><div class="spinner"></div>読み込み中...</div>';
+      document.getElementById('edit-tabs').style.display = 'none';
+      document.getElementById('editor-content').style.display = 'none';
+      document.getElementById('viewer-content').style.display = 'block';
+      showPage('viewer');
+
+      try {
+        let content;
+        if (file.source === 'gdrive') {
+          content = await loadGdriveFileContent(file.id);
+        } else {
+          content = await loadGithubFileContent(file);
+        }
+        state.currentContent = content;
+        renderMarkdown(content);
+      } catch (err) {
+        document.getElementById('viewer-content').innerHTML =
+          '<div class="empty-state"><div class="icon">⚠️</div><p>読み込みエラー: ' + escapeHtml(err.message) + '</p></div>';
+      }
+    }
+
+    // ============================================================
+    // Markdown → HTML 変換 & 描画
+    // ============================================================
+    function renderMarkdown(md) {
+      // marked の設定
+      marked.setOptions({
+        highlight: function(code, lang) {
+          if (lang && hljs.getLanguage(lang)) {
+            return hljs.highlight(code, { language: lang }).value;
+          }
+          return hljs.highlightAuto(code).value;
+        },
+        breaks: true,
+        gfm: true
+      });
+
+      // Mermaid ブロックを退避
+      let mermaidBlocks = [];
+      let processed = md.replace(/```mermaid\n([\s\S]*?)```/g, (match, code) => {
+        const idx = mermaidBlocks.length;
+        mermaidBlocks.push(code.trim());
+        return `<div class="mermaid-container" id="mermaid-block-${idx}"></div>`;
+      });
+
+      // KaTeX ブロック数式を退避
+      let katexBlocks = [];
+      processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, tex) => {
+        const idx = katexBlocks.length;
+        katexBlocks.push({ tex: tex.trim(), display: true });
+        return `<span id="katex-block-${idx}"></span>`;
+      });
+
+      // KaTeX インライン数式を退避
+      let katexInlines = [];
+      processed = processed.replace(/\$([^\$\n]+?)\$/g, (match, tex) => {
+        const idx = katexInlines.length;
+        katexInlines.push(tex.trim());
+        return `<span id="katex-inline-${idx}"></span>`;
+      });
+
+      // Markdown → HTML
+      let html = marked.parse(processed);
+
+      const viewer = document.getElementById('viewer-content');
+      viewer.innerHTML = html;
+
+      // Mermaid 図を描画
+      mermaidBlocks.forEach((code, idx) => {
+        const el = document.getElementById('mermaid-block-' + idx);
+        if (el) {
+          try {
+            el.innerHTML = '<pre class="mermaid">' + code + '</pre>';
+          } catch (e) {
+            el.innerHTML = '<pre style="color:var(--danger);">Mermaid エラー: ' + escapeHtml(e.message) + '</pre>';
+          }
+        }
+      });
+
+      // KaTeX ブロック数式を描画
+      katexBlocks.forEach((item, idx) => {
+        const el = document.getElementById('katex-block-' + idx);
+        if (el) {
+          try {
+            el.innerHTML = katex.renderToString(item.tex, { displayMode: true, throwOnError: false });
+          } catch (e) {
+            el.textContent = item.tex;
+          }
+        }
+      });
+
+      // KaTeX インライン数式を描画
+      katexInlines.forEach((tex, idx) => {
+        const el = document.getElementById('katex-inline-' + idx);
+        if (el) {
+          try {
+            el.innerHTML = katex.renderToString(tex, { displayMode: false, throwOnError: false });
+          } catch (e) {
+            el.textContent = tex;
+          }
+        }
+      });
+
+      // Mermaid を再初期化
+      if (mermaidBlocks.length > 0) {
+        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+        mermaid.run();
+      }
+    }
+
+    // ============================================================
+    // 編集モード切替
+    // ============================================================
+    function toggleEdit() {
+      state.isEditing = !state.isEditing;
+      const tabs = document.getElementById('edit-tabs');
+      const editor = document.getElementById('editor-content');
+      const viewer = document.getElementById('viewer-content');
+      const btn = document.getElementById('btn-edit');
+
+      if (state.isEditing) {
+        editor.value = state.currentContent;
+        tabs.style.display = 'flex';
+        switchTab('source');
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>閲覧';
+      } else {
+        state.currentContent = editor.value;
+        tabs.style.display = 'none';
+        editor.style.display = 'none';
+        viewer.style.display = 'block';
+        renderMarkdown(state.currentContent);
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>編集';
+      }
+    }
+
+    function switchTab(tab) {
+      const editor = document.getElementById('editor-content');
+      const viewer = document.getElementById('viewer-content');
+      const tabs = document.querySelectorAll('#edit-tabs button');
+
+      if (tab === 'source') {
+        editor.style.display = 'block';
+        viewer.style.display = 'none';
+        tabs[0].classList.remove('active');
+        tabs[1].classList.add('active');
+      } else {
+        state.currentContent = editor.value;
+        editor.style.display = 'none';
+        viewer.style.display = 'block';
+        renderMarkdown(state.currentContent);
+        tabs[0].classList.add('active');
+        tabs[1].classList.remove('active');
+      }
+    }
+
+    // ============================================================
+    // 更新
+    // ============================================================
+    function refreshFiles() {
+      state.files = [];
+      document.getElementById('file-list').innerHTML = '<div class="loading"><div class="spinner"></div>更新中...</div>';
+      if (state.gdriveToken) loadGdriveFiles();
+      if (state.githubToken) loadGithubFiles();
+      if (!state.gdriveToken && !state.githubToken) {
+        renderFileList();
+      }
+    }
+
+    // ============================================================
+    // 設定クリア
+    // ============================================================
+    function clearAllSettings() {
+      Object.assign(state, {
+        gdriveToken: null, gdriveClientId: null, gdriveFolderId: null,
+        githubToken: null, githubRepo: null, githubBranch: 'main', githubPath: '',
+        files: [], currentFile: null, currentContent: '', isEditing: false
+      });
+      localStorage.removeItem('mdviewer_settings');
+      document.querySelectorAll('.settings-section input').forEach(i => i.value = '');
+      document.getElementById('gdrive-client-id').value = '975677173358-i3rdoqc0je229uobr9cqq1sb63ett2pp.apps.googleusercontent.com';
+      document.getElementById('github-branch').value = 'main';
+      document.getElementById('github-repo-select').innerHTML = '<option value="">-- リポジトリを選択 --</option>';
+      document.getElementById('github-repo-section').style.display = 'none';
+      updateGdriveStatus(false);
+      updateGithubStatus(false);
+      renderFileList();
+      showToast('設定をクリアしました', 'info');
+    }
+
+    // ============================================================
+    // ユーティリティ
+    // ============================================================
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // ============================================================
+    // OAuth コールバック処理（リダイレクト後にトークンを拾う）
+    // ============================================================
+    (function handleOAuthRedirect() {
+      if (window.location.hash.includes('access_token=')) {
+        const params = new URLSearchParams(window.location.hash.substring(1));
+        state.gdriveToken = params.get('access_token');
+        // ハッシュをクリア
+        history.replaceState(null, '', window.location.pathname);
+        updateGdriveStatus(true);
+        showToast('Google Drive に接続しました', 'success');
+        loadGdriveFiles();
+      }
+    })();
+
+    // ============================================================
+    // Service Worker 登録
+    // ============================================================
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js')
+        .then(() => console.log('Service Worker 登録完了'))
+        .catch(err => console.warn('SW 登録失敗:', err));
+    }
+
+    // ============================================================
+    // Mermaid 初期化
+    // ============================================================
+    mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+
+    // 初期表示
+    renderFileList();
+  </script>
+</body>
+</html>
