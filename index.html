@@ -787,13 +787,34 @@
       if (savedSettings.gdriveToken) {
         document.getElementById('github-save-token').checked = true;
         state.gdriveToken = savedSettings.gdriveToken;
-        // gapi にもトークンをセット（gapi 初期化完了後に再セット）
         if (gapiReady && gapi.client) gapi.client.setToken({ access_token: state.gdriveToken });
-        updateGdriveStatus(true);
-        // Drive トークン復元 → 自動でファイル一覧取得
-        loadGdriveFiles();
+        // トークンが有効か確認してから「接続済み」にする
+        verifyAndLoadDrive();
       }
     })();
+
+    // Drive トークンの有効性を確認 → 有効なら接続済み＋ファイル取得
+    async function verifyAndLoadDrive() {
+      try {
+        // 軽量リクエストでトークン有効性を確認（about.get = 最小コスト）
+        const res = await fetch(
+          'https://www.googleapis.com/drive/v3/about?fields=user(displayName)',
+          { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+        );
+        if (res.ok) {
+          updateGdriveStatus(true);
+          loadGdriveFiles();
+        } else {
+          // トークン期限切れ → クリアして再接続を促す
+          state.gdriveToken = null;
+          updateGdriveStatus(false);
+          showToast('Google Drive のセッションが切れました。設定から再接続してください', 'warning');
+        }
+      } catch (e) {
+        state.gdriveToken = null;
+        updateGdriveStatus(false);
+      }
+    }
 
     // ============================================================
     // ページ切替
