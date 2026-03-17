@@ -13,6 +13,8 @@
   <link rel="icon" type="image/png" sizes="512x512" href="./icons/icon-512x512.png">
 
   <!-- ===== 外部ライブラリ ===== -->
+  <!-- Google API Client (gapi) — Drive ファイル読み込みの CORS 問題回避用 -->
+  <script src="https://apis.google.com/js/api.js"></script>
   <!-- Markdown → HTML 変換 -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <!-- コードのシンタックスハイライト -->
@@ -725,6 +727,8 @@
       if (savedSettings.gdriveToken) {
         document.getElementById('github-save-token').checked = true;
         state.gdriveToken = savedSettings.gdriveToken;
+        // gapi にもトークンをセット（gapi 初期化完了後に再セット）
+        if (gapiReady && gapi.client) gapi.client.setToken({ access_token: state.gdriveToken });
         updateGdriveStatus(true);
         // Drive トークン復元 → 自動でファイル一覧取得
         loadGdriveFiles();
@@ -800,6 +804,8 @@
             const hash = popup.location.hash.substring(1);
             const params = new URLSearchParams(hash);
             state.gdriveToken = params.get('access_token');
+            // gapi にもトークンをセット
+            if (gapiReady && gapi.client) gapi.client.setToken({ access_token: state.gdriveToken });
             popup.close();
             updateGdriveStatus(true);
             showToast('Google Drive に接続しました', 'success');
@@ -991,9 +997,43 @@
     }
 
     // ============================================================
-    // Google Drive ファイル内容取得
+    // gapi (Google API Client) 初期化
+    // alt=media でファイル内容を取得すると 302 リダイレクト先で
+    // CORS ヘッダーが返らず fetch() が失敗する。
+    // gapi.client はこの問題を内部で回避してくれる。
+    // ============================================================
+    let gapiReady = false;
+    function initGapi() {
+      return new Promise((resolve) => {
+        if (typeof gapi === 'undefined') { resolve(false); return; }
+        gapi.load('client', () => {
+          gapiReady = true;
+          // トークンがあればセット
+          if (state.gdriveToken) {
+            gapi.client.setToken({ access_token: state.gdriveToken });
+          }
+          resolve(true);
+        });
+      });
+    }
+    // ページ読み込み時に初期化開始
+    initGapi();
+
+    // ============================================================
+    // Google Drive ファイル内容取得（gapi 経由で CORS 回避）
     // ============================================================
     async function loadGdriveFileContent(fileId) {
+      // gapi が使えるなら gapi 経由（CORS 問題なし）
+      if (gapiReady && gapi.client) {
+        // トークンを最新に同期
+        gapi.client.setToken({ access_token: state.gdriveToken });
+        const response = await gapi.client.request({
+          path: '/drive/v3/files/' + fileId,
+          params: { alt: 'media' }
+        });
+        return response.body;
+      }
+      // フォールバック: gapi 未読み込み時は fetch を試す
       const res = await fetch(
         'https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media',
         { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
@@ -1403,12 +1443,27 @@
         // PDF ファイルの場合は専用レンダラーで表示
         if (file.name.endsWith('.pdf')) {
           document.getElementById('btn-edit').style.display = 'none';
-          const res = await fetch(
-            'https://www.googleapis.com/drive/v3/files/' + file.id + '?alt=media',
-            { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
-          );
-          if (!res.ok) throw new Error('PDF 読み込みエラー: ' + res.status);
-          const pdfData = await res.arrayBuffer();
+          let pdfData;
+          if (gapiReady && gapi.client) {
+            gapi.client.setToken({ access_token: state.gdriveToken });
+            const response = await gapi.client.request({
+              path: '/drive/v3/files/' + file.id,
+              params: { alt: 'media' }
+            });
+            // gapi は body を文字列で返すので ArrayBuffer に変換
+            const bytes = new Uint8Array(response.body.length);
+            for (let i = 0; i < response.body.length; i++) {
+              bytes[i] = response.body.charCodeAt(i) & 0xff;
+            }
+            pdfData = bytes.buffer;
+          } else {
+            const res = await fetch(
+              'https://www.googleapis.com/drive/v3/files/' + file.id + '?alt=media',
+              { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+            );
+            if (!res.ok) throw new Error('PDF 読み込みエラー: ' + res.status);
+            pdfData = await res.arrayBuffer();
+          }
           await renderPdf(pdfData);
           return;
         }
@@ -1653,9 +1708,12 @@
       if (window.location.hash.includes('access_token=')) {
         const params = new URLSearchParams(window.location.hash.substring(1));
         state.gdriveToken = params.get('access_token');
+        // gapi にもトークンをセット
+        if (gapiReady && gapi.client) gapi.client.setToken({ access_token: state.gdriveToken });
         // ハッシュをクリア
         history.replaceState(null, '', window.location.pathname);
         updateGdriveStatus(true);
+        saveSettings();
         showToast('Google Drive に接続しました', 'success');
         loadGdriveFiles();
       }
