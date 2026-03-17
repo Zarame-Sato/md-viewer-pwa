@@ -992,7 +992,7 @@
         'https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media',
         { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
       );
-      if (!res.ok) throw new Error('ファイル読み込みエラー: ' + res.status);
+      if (!res.ok) throw new Error('Drive ファイル読み込みエラー: ' + res.status);
       return await res.text();
     }
 
@@ -1257,8 +1257,13 @@
     // GitHub ファイル内容取得
     // ============================================================
     async function loadGithubFileContent(file) {
-      const res = await fetch(file.download_url);
-      if (!res.ok) throw new Error('ファイル読み込みエラー');
+      // Private リポジトリは raw.githubusercontent.com でも認証が必要
+      const headers = {};
+      if (state.githubToken) {
+        headers['Authorization'] = 'token ' + state.githubToken;
+      }
+      const res = await fetch(file.download_url, { headers });
+      if (!res.ok) throw new Error('GitHub ファイル読み込みエラー: ' + res.status);
       return await res.text();
     }
 
