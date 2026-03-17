@@ -1988,14 +1988,14 @@
       document.getElementById('viewer-title').textContent = tab.file.name;
 
       if (tab.file.name.endsWith('.pdf')) {
-        // PDF
+        // PDF — Canvas は innerHTML で復元できないので、pdfData から再描画する
         document.getElementById('btn-edit').style.display = 'none';
         document.getElementById('btn-save-drive').style.display = 'none';
         editTabs.style.display = 'none';
         editor.style.display = 'none';
         viewer.style.display = 'block';
-        if (tab.renderedHtml) {
-          viewer.innerHTML = tab.renderedHtml;
+        if (tab.pdfData) {
+          renderPdf(tab.pdfData);
         } else {
           viewer.innerHTML = '<div class="loading"><div class="spinner"></div>読み込み中...</div>';
         }
@@ -2120,8 +2120,8 @@
             pdfData = await res.arrayBuffer();
           }
           await renderPdf(pdfData);
-          // レンダリング結果をタブに保存
-          newTab.renderedHtml = document.getElementById('viewer-content').innerHTML;
+          // PDF バイナリデータをタブに保存（タブ切替時の再描画に使う）
+          newTab.pdfData = pdfData;
           return;
         }
 
