@@ -1059,7 +1059,16 @@
       // OAuth2 Implicit Flow
       // iPad/iPhone ではポップアップがブロックされるため、
       // 同じウィンドウでリダイレクトする方式を使う
-      const redirectUri = window.location.origin + window.location.pathname;
+      // PWAモード/ブラウザモードでpathが変わる場合があるため、
+      // 末尾スラッシュ付きの正規URLに統一する（Google Console側と一致させる）
+      let redirectUri = window.location.origin + window.location.pathname;
+      // index.html が付いていたら除去して / で終わるようにする
+      if (redirectUri.endsWith('/index.html')) {
+        redirectUri = redirectUri.replace('/index.html', '/');
+      }
+      if (!redirectUri.endsWith('/')) {
+        redirectUri += '/';
+      }
       const scope = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly';
       const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' +
         'client_id=' + encodeURIComponent(clientId) +
