@@ -70,6 +70,29 @@
       overflow: hidden;
     }
 
+    /* ビューアページ表示時: bodyスクロールに切り替え（アドレスバー折りたたみ対応） */
+    body.viewer-mode { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    body.viewer-mode #app { height: auto; min-height: 100%; }
+    body.viewer-mode main { overflow: visible; }
+    body.viewer-mode #page-viewer {
+      position: relative;
+      overflow-y: visible;
+      padding-bottom: calc(70px + var(--safe-bottom));
+    }
+    body.viewer-mode header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    body.viewer-mode nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding-bottom: var(--safe-bottom);
+    }
+
     /* 背景にグラデーションオーブ */
     body::before {
       content: '';
@@ -166,6 +189,8 @@
     .btn-success { background: var(--success); box-shadow: 0 2px 12px rgba(52,211,153,0.25); }
     .btn-success:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(52,211,153,0.35); }
     .btn-danger { background: var(--danger); }
+    .btn-info { background: #6c8aff; box-shadow: 0 2px 12px rgba(108,138,255,0.25); }
+    .btn-info:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(108,138,255,0.35); }
     .btn-icon {
       width: 40px; height: 40px;
       padding: 0; border-radius: 12px;
@@ -233,6 +258,7 @@
     }
     .file-icon.md-icon { background: linear-gradient(135deg, #6c8aff, #818cf8); }
     .file-icon.pdf-icon { background: linear-gradient(135deg, #f87171, #fb923c); }
+    .file-icon.csv-icon { background: linear-gradient(135deg, #34d399, #2dd4bf); }
     .file-icon.default-icon { background: linear-gradient(135deg, #6c8aff, #8b5cf6); }
     .file-info { flex: 1; min-width: 0; }
     .file-name {
@@ -400,6 +426,9 @@
       -webkit-backdrop-filter: var(--glass);
       backdrop-filter: var(--glass);
       border: 1px solid rgba(255,255,255,0.1);
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
     }
     .toast.show { transform: translateX(-50%) translateY(0); }
     .toast.success { background: rgba(52,211,153,0.9); color: #022c22; }
@@ -731,6 +760,58 @@
     }
     .file-tab-type.md { background: rgba(108,138,255,0.15); color: #8aa8ff; }
     .file-tab-type.pdf { background: rgba(248,113,113,0.15); color: #fca5a5; }
+    .file-tab-type.csv { background: rgba(52,211,153,0.15); color: #6ee7b7; }
+
+    /* ===== CSV テーブルエディタ ===== */
+    .csv-toolbar {
+      display: flex;
+      gap: 8px;
+      padding: 8px 16px;
+      flex-wrap: wrap;
+    }
+    .csv-toolbar .btn { font-size: 12px; padding: 6px 10px; }
+    .csv-table-wrapper {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 0 8px 16px;
+    }
+    .csv-table {
+      border-collapse: collapse;
+      font-size: 13px;
+      min-width: 100%;
+      background: var(--card-bg);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .csv-table th, .csv-table td {
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      min-width: 60px;
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      outline: none;
+      transition: background 0.15s, box-shadow 0.15s;
+    }
+    .csv-table th { background: rgba(108,138,255,0.1); font-weight: 600; }
+    .csv-row-num {
+      background: rgba(108,138,255,0.05) !important;
+      color: var(--text-muted);
+      font-size: 11px;
+      text-align: center;
+      min-width: 36px !important;
+      max-width: 36px !important;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .csv-cell:focus {
+      background: rgba(108,138,255,0.15);
+      box-shadow: inset 0 0 0 2px var(--accent);
+      white-space: normal;
+      word-break: break-all;
+    }
+    .csv-header-cell { color: var(--accent); }
 
     /* ===== 接続ステータス ===== */
     .status-badge {
@@ -802,6 +883,10 @@
           <button class="btn btn-primary" onclick="saveToDrive()" id="btn-save-drive" style="font-size:12px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
             保存
+          </button>
+          <button class="btn btn-info" onclick="pullFromGitHub()" id="btn-pull" style="font-size:12px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
+            Pull
           </button>
           <button class="btn btn-success" onclick="pushToGitHub()" id="btn-push" style="font-size:12px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
@@ -888,6 +973,10 @@
             トークンは Chrome のパスワード保存機能で管理できます。
           </p>
           <button class="btn btn-danger" onclick="clearAllSettings()">設定をクリア</button>
+          <button class="btn btn-info" onclick="pullAllFromGitHub()" style="margin-left:8px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
+            全リポジトリ Pull
+          </button>
         </div>
       </div>
     </main>
@@ -905,7 +994,7 @@
     </nav>
 
     <!-- 通知 -->
-    <div id="toast" class="toast"></div>
+    <div id="toast" class="toast" onclick="this.classList.remove('show'); if(_toastTimer){clearTimeout(_toastTimer);_toastTimer=null;}"></div>
   </div>
 
   <script>
@@ -1031,16 +1120,32 @@
       if (name === 'viewer') {
         document.getElementById('nav-files').classList.add('active');
       }
+
+      // ビューアページ表示時はbodyスクロールに切り替え（アドレスバー折りたたみ対応）
+      if (name === 'viewer') {
+        document.body.classList.add('viewer-mode');
+      } else {
+        document.body.classList.remove('viewer-mode');
+        // ページ切り替え時にbodyのスクロール位置をリセット
+        window.scrollTo(0, 0);
+      }
     }
 
     // ============================================================
     // 通知表示
     // ============================================================
+    // トーストタイマーID（前の通知をキャンセルするため保持）
+    let _toastTimer = null;
     function showToast(message, type = 'info') {
       const toast = document.getElementById('toast');
+      // 前のタイマーが残っていたらキャンセル（連続表示で消えないバグ防止）
+      if (_toastTimer) clearTimeout(_toastTimer);
       toast.textContent = message;
       toast.className = 'toast ' + type + ' show';
-      setTimeout(() => toast.classList.remove('show'), 3000);
+      _toastTimer = setTimeout(() => {
+        toast.classList.remove('show');
+        _toastTimer = null;
+      }, 3000);
     }
 
     // ============================================================
@@ -1258,9 +1363,9 @@
           "mimeType='application/vnd.google-apps.folder' and trashed=false",
           'id,name,parents'
         ),
-        // ② Drive 内の全 md/pdf ファイル
+        // ② Drive 内の全 md/pdf/csv ファイル
         driveListAll(
-          "(fileExtension='md' or mimeType='text/markdown' or fileExtension='pdf' or mimeType='application/pdf') and trashed=false",
+          "(fileExtension='md' or mimeType='text/markdown' or fileExtension='pdf' or mimeType='application/pdf' or fileExtension='csv' or mimeType='text/csv') and trashed=false",
           'id,name,mimeType,modifiedTime,size,parents'
         )
       ]);
@@ -1671,14 +1776,15 @@
         // Drive API v3: multipart upload で内容を更新
         // メタデータ部（空でOK）+ メディア部（ファイル内容）
         const boundary = '----MDViewerBoundary' + Date.now();
-        const metadata = JSON.stringify({ mimeType: 'text/markdown' });
+        const mimeType = (state.currentFile.name.endsWith('.csv')) ? 'text/csv' : 'text/markdown';
+        const metadata = JSON.stringify({ mimeType: mimeType });
 
         const body =
           '--' + boundary + '\r\n' +
           'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
           metadata + '\r\n' +
           '--' + boundary + '\r\n' +
-          'Content-Type: text/markdown; charset=UTF-8\r\n\r\n' +
+          'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
           content + '\r\n' +
           '--' + boundary + '--';
 
@@ -1802,6 +1908,261 @@
     }
 
     // ============================================================
+    // GitHub から Pull（ファイル単位）
+    // GitHub の内容を取得し、Drive に上書き保存する
+    // ============================================================
+    async function pullFromGitHub() {
+      if (!state.githubToken || Object.keys(state.repoMappings).length === 0) {
+        showToast('GitHub が未接続です。設定画面でマッピングを設定してください', 'error');
+        return;
+      }
+      if (!state.currentFile) return;
+      if (!state.gdriveToken) {
+        showToast('Google Drive に再接続してください', 'error');
+        return;
+      }
+
+      const resolved = resolveRepoAndPath(state.currentFile);
+      if (!resolved) {
+        showToast('このファイルに対応するリポジトリが見つかりません', 'error');
+        return;
+      }
+      const { repo: targetRepo, path: filePath } = resolved;
+
+      const btn = document.getElementById('btn-pull');
+      btn.disabled = true;
+      btn.textContent = 'Pull 中...';
+
+      try {
+        // 1. GitHub からファイル内容を取得
+        const ghRes = await fetch(
+          'https://api.github.com/repos/' + targetRepo + '/contents/' + filePath + '?ref=' + state.githubBranch,
+          { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+        );
+        if (!ghRes.ok) {
+          if (ghRes.status === 404) throw new Error('GitHub にこのファイルが存在しません');
+          throw new Error('GitHub からの取得失敗: ' + ghRes.status);
+        }
+        const ghData = await ghRes.json();
+
+        // 2. GitHub のコミット日時を取得（最終更新）
+        let ghLastModified = null;
+        try {
+          const commitsRes = await fetch(
+            'https://api.github.com/repos/' + targetRepo + '/commits?path=' + encodeURIComponent(filePath) + '&sha=' + state.githubBranch + '&per_page=1',
+            { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+          );
+          if (commitsRes.ok) {
+            const commits = await commitsRes.json();
+            if (commits.length > 0) {
+              ghLastModified = new Date(commits[0].commit.committer.date);
+            }
+          }
+        } catch (e) { /* 日時取得失敗は無視して続行 */ }
+
+        // 3. Drive のファイル更新日時を取得
+        let driveLastModified = null;
+        try {
+          const driveMetaRes = await fetch(
+            'https://www.googleapis.com/drive/v3/files/' + state.currentFile.id + '?fields=modifiedTime',
+            { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+          );
+          if (driveMetaRes.ok) {
+            const driveMeta = await driveMetaRes.json();
+            driveLastModified = new Date(driveMeta.modifiedTime);
+          }
+        } catch (e) { /* 日時取得失敗は無視 */ }
+
+        // 4. 日時比較（Drive の方が新しければ確認）
+        if (ghLastModified && driveLastModified && driveLastModified > ghLastModified) {
+          const ghTimeStr = ghLastModified.toLocaleString('ja-JP');
+          const drTimeStr = driveLastModified.toLocaleString('ja-JP');
+          if (!confirm(
+            'Drive の方が新しいです。上書きしますか？\n\n' +
+            'Drive: ' + drTimeStr + '\n' +
+            'GitHub: ' + ghTimeStr + '\n\n' +
+            '※ GitHub の内容で Drive を上書きします'
+          )) {
+            showToast('Pull をキャンセルしました', 'info');
+            return;
+          }
+        }
+
+        // 5. Base64 デコードして内容を取得
+        const ghContent = decodeURIComponent(escape(atob(ghData.content.replace(/\n/g, ''))));
+
+        // 6. Drive に上書き保存
+        const boundary = '----MDViewerBoundary' + Date.now();
+        const mimeType = state.currentFile.name.endsWith('.csv') ? 'text/csv' : 'text/markdown';
+        const metadata = JSON.stringify({ mimeType: mimeType });
+        const uploadBody =
+          '--' + boundary + '\r\n' +
+          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+          metadata + '\r\n' +
+          '--' + boundary + '\r\n' +
+          'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
+          ghContent + '\r\n' +
+          '--' + boundary + '--';
+
+        const driveRes = await fetch(
+          'https://www.googleapis.com/upload/drive/v3/files/' + state.currentFile.id + '?uploadType=multipart',
+          {
+            method: 'PATCH',
+            headers: {
+              'Authorization': 'Bearer ' + state.gdriveToken,
+              'Content-Type': 'multipart/related; boundary=' + boundary
+            },
+            body: uploadBody
+          }
+        );
+        if (!driveRes.ok) throw new Error('Drive への保存失敗: ' + driveRes.status);
+
+        // 7. 画面上の内容を更新
+        state.currentContent = ghContent;
+        if (state.activeTabIndex >= 0 && state.activeTabIndex < state.openTabs.length) {
+          state.openTabs[state.activeTabIndex].content = ghContent;
+        }
+        if (state.currentFile.name.endsWith('.csv')) {
+          renderCsv(ghContent);
+        } else {
+          renderMarkdown(ghContent);
+        }
+        if (state.isEditing) {
+          document.getElementById('editor-content').value = ghContent;
+        }
+
+        showToast('GitHub から Pull しました: ' + filePath, 'success');
+      } catch (err) {
+        showToast('Pull 失敗: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>Pull';
+      }
+    }
+
+    // ============================================================
+    // GitHub から Pull（リポジトリ単位）
+    // マッピングされた全リポジトリの全ファイルを比較して新しい方で同期
+    // ============================================================
+    async function pullAllFromGitHub() {
+      if (!state.githubToken || Object.keys(state.repoMappings).length === 0) {
+        showToast('GitHub が未接続です', 'error');
+        return;
+      }
+      if (!state.gdriveToken) {
+        showToast('Google Drive に再接続してください', 'error');
+        return;
+      }
+
+      if (!confirm('GitHub から全ファイルを Pull します。\nDrive より新しいファイルのみ上書きされます。\n\n続行しますか？')) {
+        return;
+      }
+
+      showToast('リポジトリ Pull を開始します...', 'info');
+      let updated = 0;
+      let skipped = 0;
+      let errors = 0;
+
+      for (const [folder, repo] of Object.entries(state.repoMappings)) {
+        try {
+          // リポジトリのファイルツリーを取得
+          const treeRes = await fetch(
+            'https://api.github.com/repos/' + repo + '/git/trees/' + state.githubBranch + '?recursive=1',
+            { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+          );
+          if (!treeRes.ok) { errors++; continue; }
+          const treeData = await treeRes.json();
+
+          // md, csv ファイルだけ対象
+          const targetFiles = (treeData.tree || []).filter(f =>
+            f.type === 'blob' && (f.path.endsWith('.md') || f.path.endsWith('.csv'))
+          );
+
+          for (const ghFile of targetFiles) {
+            try {
+              // Drive側で対応ファイルを探す
+              const drivePath = folder + '/' + ghFile.path;
+              const driveFile = state.files.find(f => f.drivePath === drivePath);
+              if (!driveFile) { skipped++; continue; }
+
+              // GitHub のコミット日時
+              let ghTime = null;
+              try {
+                const cRes = await fetch(
+                  'https://api.github.com/repos/' + repo + '/commits?path=' + encodeURIComponent(ghFile.path) + '&sha=' + state.githubBranch + '&per_page=1',
+                  { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+                );
+                if (cRes.ok) {
+                  const commits = await cRes.json();
+                  if (commits.length > 0) ghTime = new Date(commits[0].commit.committer.date);
+                }
+              } catch (e) {}
+
+              // Drive の更新日時
+              let driveTime = null;
+              try {
+                const mRes = await fetch(
+                  'https://www.googleapis.com/drive/v3/files/' + driveFile.id + '?fields=modifiedTime',
+                  { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+                );
+                if (mRes.ok) {
+                  const meta = await mRes.json();
+                  driveTime = new Date(meta.modifiedTime);
+                }
+              } catch (e) {}
+
+              // Drive の方が新しければスキップ（コンフリクト回避）
+              if (ghTime && driveTime && driveTime >= ghTime) {
+                skipped++;
+                continue;
+              }
+
+              // GitHub の内容を取得
+              const contentRes = await fetch(
+                'https://api.github.com/repos/' + repo + '/contents/' + ghFile.path + '?ref=' + state.githubBranch,
+                { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+              );
+              if (!contentRes.ok) { errors++; continue; }
+              const contentData = await contentRes.json();
+              const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
+
+              // Drive に上書き
+              const boundary = '----MDViewerBoundary' + Date.now();
+              const mimeType = ghFile.path.endsWith('.csv') ? 'text/csv' : 'text/markdown';
+              const metadata = JSON.stringify({ mimeType: mimeType });
+              const body =
+                '--' + boundary + '\r\n' +
+                'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+                metadata + '\r\n' +
+                '--' + boundary + '\r\n' +
+                'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
+                content + '\r\n' +
+                '--' + boundary + '--';
+
+              const upRes = await fetch(
+                'https://www.googleapis.com/upload/drive/v3/files/' + driveFile.id + '?uploadType=multipart',
+                {
+                  method: 'PATCH',
+                  headers: {
+                    'Authorization': 'Bearer ' + state.gdriveToken,
+                    'Content-Type': 'multipart/related; boundary=' + boundary
+                  },
+                  body: body
+                }
+              );
+              if (upRes.ok) updated++;
+              else errors++;
+            } catch (e) { errors++; }
+          }
+        } catch (e) { errors++; }
+      }
+
+      showToast('Pull 完了: ' + updated + '件更新 / ' + skipped + '件スキップ' + (errors > 0 ? ' / ' + errors + '件エラー' : ''), updated > 0 ? 'success' : 'info');
+      // ファイル一覧を再取得
+      if (updated > 0) refreshFiles();
+    }
+
+    // ============================================================
     // ファイル一覧の描画
     // ============================================================
     // ============================================================
@@ -1866,9 +2227,10 @@
           const fileName = pathParts.pop();
           const folderPath = pathParts.length > 0 ? pathParts.join('/') + '/' : '';
           const date = f.modifiedTime ? new Date(f.modifiedTime).toLocaleDateString('ja-JP') : '';
-          const iconClass = f.name.endsWith('.pdf') ? 'pdf-icon' : 'md-icon';
+          const iconClass = f.name.endsWith('.pdf') ? 'pdf-icon' : f.name.endsWith('.csv') ? 'csv-icon' : 'md-icon';
+          const iconLabel = f.name.endsWith('.pdf') ? 'PDF' : f.name.endsWith('.csv') ? 'CSV' : 'MD';
           return '<div class="file-item" onclick="openFile(' + idx + ')">' +
-            '<div class="file-icon ' + iconClass + '">' + (f.name.endsWith('.pdf') ? 'PDF' : 'MD') + '</div>' +
+            '<div class="file-icon ' + iconClass + '">' + iconLabel + '</div>' +
             '<div class="file-info">' +
             '<div class="file-name">' + escapeHtml(fileName) + '</div>' +
             '<div class="file-meta">' + (folderPath ? escapeHtml(folderPath) + ' ・ ' : '') + date + '</div>' +
@@ -1888,7 +2250,7 @@
             ? '設定画面から GitHub → Google Drive の順に接続してください'
             : Object.keys(state.repoMappings).length === 0
               ? '先に設定画面で GitHub リポジトリのマッピングを設定してください'
-              : '.md ファイルが見つかりません') +
+              : '.md / .csv ファイルが見つかりません') +
           '</p></div>';
         return;
       }
@@ -1941,9 +2303,10 @@
       for (const f of currentFiles) {
         const idx = state.files.indexOf(f);
         const date = f.modifiedTime ? new Date(f.modifiedTime).toLocaleDateString('ja-JP') : '';
-        const iconCls = f.name.endsWith('.pdf') ? 'pdf-icon' : 'md-icon';
+        const iconCls = f.name.endsWith('.pdf') ? 'pdf-icon' : f.name.endsWith('.csv') ? 'csv-icon' : 'md-icon';
+        const iconLbl = f.name.endsWith('.pdf') ? 'PDF' : f.name.endsWith('.csv') ? 'CSV' : 'MD';
         html += '<div class="file-item" onclick="openFile(' + idx + ')">' +
-          '<div class="file-icon ' + iconCls + '">' + (f.name.endsWith('.pdf') ? 'PDF' : 'MD') + '</div>' +
+          '<div class="file-icon ' + iconCls + '">' + iconLbl + '</div>' +
           '<div class="file-info">' +
           '<div class="file-name">' + escapeHtml(f.name) + '</div>' +
           '<div class="file-meta">Google Drive' + (date ? ' ・ ' + date : '') + '</div>' +
@@ -1975,8 +2338,9 @@
       container.style.display = 'flex';
       container.innerHTML = state.openTabs.map((tab, i) => {
         const isPdf = tab.file.name.endsWith('.pdf');
-        const typeClass = isPdf ? 'pdf' : 'md';
-        const typeLabel = isPdf ? 'PDF' : 'MD';
+        const isCsv = tab.file.name.endsWith('.csv');
+        const typeClass = isPdf ? 'pdf' : isCsv ? 'csv' : 'md';
+        const typeLabel = isPdf ? 'PDF' : isCsv ? 'CSV' : 'MD';
         const activeClass = i === state.activeTabIndex ? ' active' : '';
         return '<div class="file-tab' + activeClass + '" onclick="switchToTab(' + i + ')">' +
           '<span class="file-tab-type ' + typeClass + '">' + typeLabel + '</span>' +
@@ -2025,7 +2389,8 @@
           viewer.innerHTML = '<div class="loading"><div class="spinner"></div>読み込み中...</div>';
         }
       } else {
-        // Markdown
+        // Markdown / CSV
+        const isCsv = tab.file.name.endsWith('.csv');
         document.getElementById('btn-edit').style.display = '';
         document.getElementById('btn-save-drive').style.display = '';
         if (state.isEditing) {
@@ -2033,13 +2398,15 @@
           editTabs.style.display = 'flex';
           editor.style.display = 'block';
           viewer.style.display = 'none';
-          document.getElementById('btn-edit').innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>閲覧';
+          document.getElementById('btn-edit').innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>' + (isCsv ? 'テーブル' : '閲覧');
         } else {
           editTabs.style.display = 'none';
           editor.style.display = 'none';
           viewer.style.display = 'block';
-          document.getElementById('btn-edit').innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>編集';
-          if (tab.renderedHtml) {
+          document.getElementById('btn-edit').innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' + (isCsv ? 'ソース' : '編集');
+          if (isCsv) {
+            renderCsv(tab.content || '');
+          } else if (tab.renderedHtml) {
             viewer.innerHTML = tab.renderedHtml;
           } else {
             renderMarkdown(tab.content || '');
@@ -2147,6 +2514,19 @@
           await renderPdf(pdfData);
           // PDF バイナリデータをタブに保存（タブ切替時の再描画に使う）
           newTab.pdfData = pdfData;
+          return;
+        }
+
+        // CSV ファイル
+        if (file.name.endsWith('.csv')) {
+          document.getElementById('btn-edit').style.display = '';
+          document.getElementById('btn-edit').innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>ソース';
+          document.getElementById('btn-save-drive').style.display = '';
+          const content = await loadGdriveFileContent(file.id);
+          state.currentContent = content;
+          newTab.content = content;
+          renderCsv(content);
+          newTab.renderedHtml = document.getElementById('viewer-content').innerHTML;
           return;
         }
 
@@ -2299,6 +2679,183 @@
     }
 
     // ============================================================
+    // CSV パース & レンダリング（表形式エディタ）
+    // ============================================================
+    function parseCsv(text) {
+      // RFC 4180 準拠のCSVパーサー（ダブルクオート・改行対応）
+      const rows = [];
+      let current = '';
+      let inQuotes = false;
+      let row = [];
+
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inQuotes) {
+          if (ch === '"') {
+            if (i + 1 < text.length && text[i + 1] === '"') {
+              current += '"';
+              i++; // エスケープされたダブルクオート
+            } else {
+              inQuotes = false;
+            }
+          } else {
+            current += ch;
+          }
+        } else {
+          if (ch === '"') {
+            inQuotes = true;
+          } else if (ch === ',') {
+            row.push(current);
+            current = '';
+          } else if (ch === '\r') {
+            // \r\n の場合は \n もスキップ
+            if (i + 1 < text.length && text[i + 1] === '\n') i++;
+            row.push(current);
+            current = '';
+            if (row.length > 0) rows.push(row);
+            row = [];
+          } else if (ch === '\n') {
+            row.push(current);
+            current = '';
+            if (row.length > 0) rows.push(row);
+            row = [];
+          } else {
+            current += ch;
+          }
+        }
+      }
+      // 最後のフィールド
+      row.push(current);
+      if (row.length > 0 && !(row.length === 1 && row[0] === '')) rows.push(row);
+
+      return rows;
+    }
+
+    function csvToString(rows) {
+      return rows.map(row =>
+        row.map(cell => {
+          // カンマ、ダブルクオート、改行を含むセルはクオートで囲む
+          if (cell.includes(',') || cell.includes('"') || cell.includes('\n') || cell.includes('\r')) {
+            return '"' + cell.replace(/"/g, '""') + '"';
+          }
+          return cell;
+        }).join(',')
+      ).join('\n');
+    }
+
+    // CSV用の状態
+    let csvData = null; // { rows: [[...], ...], headerRow: true }
+
+    function renderCsv(text) {
+      const viewer = document.getElementById('viewer-content');
+      const rows = parseCsv(text);
+      if (rows.length === 0) {
+        viewer.innerHTML = '<div class="empty-state"><div class="icon">📊</div><p>CSV が空です</p></div>';
+        return;
+      }
+
+      csvData = { rows: rows };
+
+      // 列数を統一（最大列数に合わせる）
+      const maxCols = Math.max(...rows.map(r => r.length));
+      rows.forEach(r => { while (r.length < maxCols) r.push(''); });
+
+      // テーブル構築
+      let html = '<div class="csv-toolbar">';
+      html += '<button class="btn btn-secondary" onclick="csvAddRow()">+ 行追加</button>';
+      html += '<button class="btn btn-secondary" onclick="csvAddCol()">+ 列追加</button>';
+      html += '<button class="btn btn-secondary" onclick="csvDeleteRow()">- 行削除</button>';
+      html += '<button class="btn btn-secondary" onclick="csvDeleteCol()">- 列削除</button>';
+      html += '</div>';
+      html += '<div class="csv-table-wrapper"><table class="csv-table" id="csv-edit-table">';
+
+      // ヘッダー行（1行目）
+      html += '<thead><tr><th class="csv-row-num">#</th>';
+      for (let c = 0; c < maxCols; c++) {
+        html += '<th contenteditable="true" class="csv-cell csv-header-cell" data-row="0" data-col="' + c + '">' + escapeHtml(rows[0][c]) + '</th>';
+      }
+      html += '</tr></thead>';
+
+      // データ行
+      html += '<tbody>';
+      for (let r = 1; r < rows.length; r++) {
+        html += '<tr><td class="csv-row-num">' + r + '</td>';
+        for (let c = 0; c < maxCols; c++) {
+          html += '<td contenteditable="true" class="csv-cell" data-row="' + r + '" data-col="' + c + '">' + escapeHtml(rows[r][c]) + '</td>';
+        }
+        html += '</tr>';
+      }
+      html += '</tbody></table></div>';
+
+      viewer.innerHTML = html;
+
+      // セル編集イベント
+      viewer.querySelectorAll('.csv-cell').forEach(cell => {
+        cell.addEventListener('blur', function() {
+          const r = parseInt(this.dataset.row);
+          const c = parseInt(this.dataset.col);
+          if (csvData && csvData.rows[r]) {
+            csvData.rows[r][c] = this.textContent;
+            // 内部状態を更新（保存・Push時に使う）
+            state.currentContent = csvToString(csvData.rows);
+            if (state.activeTabIndex >= 0 && state.activeTabIndex < state.openTabs.length) {
+              state.openTabs[state.activeTabIndex].content = state.currentContent;
+            }
+          }
+        });
+        // Tabキーで次のセルへ移動
+        cell.addEventListener('keydown', function(e) {
+          if (e.key === 'Tab') {
+            e.preventDefault();
+            const r = parseInt(this.dataset.row);
+            const c = parseInt(this.dataset.col);
+            const maxCols = csvData.rows[0].length;
+            let nextR = r, nextC = c + (e.shiftKey ? -1 : 1);
+            if (nextC >= maxCols) { nextC = 0; nextR++; }
+            if (nextC < 0) { nextC = maxCols - 1; nextR--; }
+            const nextCell = document.querySelector('.csv-cell[data-row="' + nextR + '"][data-col="' + nextC + '"]');
+            if (nextCell) nextCell.focus();
+          }
+        });
+      });
+    }
+
+    function csvAddRow() {
+      if (!csvData) return;
+      const cols = csvData.rows[0].length;
+      csvData.rows.push(new Array(cols).fill(''));
+      state.currentContent = csvToString(csvData.rows);
+      renderCsv(state.currentContent);
+    }
+
+    function csvAddCol() {
+      if (!csvData) return;
+      csvData.rows.forEach(row => row.push(''));
+      state.currentContent = csvToString(csvData.rows);
+      renderCsv(state.currentContent);
+    }
+
+    function csvDeleteRow() {
+      if (!csvData || csvData.rows.length <= 1) {
+        showToast('ヘッダー行は削除できません', 'error');
+        return;
+      }
+      csvData.rows.pop();
+      state.currentContent = csvToString(csvData.rows);
+      renderCsv(state.currentContent);
+    }
+
+    function csvDeleteCol() {
+      if (!csvData || csvData.rows[0].length <= 1) {
+        showToast('最後の列は削除できません', 'error');
+        return;
+      }
+      csvData.rows.forEach(row => row.pop());
+      state.currentContent = csvToString(csvData.rows);
+      renderCsv(state.currentContent);
+    }
+
+    // ============================================================
     // 編集モード切替
     // ============================================================
     function toggleEdit() {
@@ -2307,19 +2864,24 @@
       const editor = document.getElementById('editor-content');
       const viewer = document.getElementById('viewer-content');
       const btn = document.getElementById('btn-edit');
+      const isCsvFile = state.currentFile && state.currentFile.name.endsWith('.csv');
 
       if (state.isEditing) {
         editor.value = state.currentContent;
         tabs.style.display = 'flex';
         switchTab('source');
-        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>閲覧';
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>' + (isCsvFile ? 'テーブル' : '閲覧');
       } else {
         state.currentContent = editor.value;
         tabs.style.display = 'none';
         editor.style.display = 'none';
         viewer.style.display = 'block';
-        renderMarkdown(state.currentContent);
-        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>編集';
+        if (isCsvFile) {
+          renderCsv(state.currentContent);
+        } else {
+          renderMarkdown(state.currentContent);
+        }
+        btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' + (isCsvFile ? 'ソース' : '編集');
       }
       // タブの状態も同期
       if (state.activeTabIndex >= 0 && state.activeTabIndex < state.openTabs.length) {
@@ -2334,6 +2896,7 @@
       const editor = document.getElementById('editor-content');
       const viewer = document.getElementById('viewer-content');
       const tabs = document.querySelectorAll('#edit-tabs button');
+      const isCsvFile = state.currentFile && state.currentFile.name.endsWith('.csv');
 
       if (tab === 'source') {
         editor.style.display = 'block';
@@ -2344,7 +2907,11 @@
         state.currentContent = editor.value;
         editor.style.display = 'none';
         viewer.style.display = 'block';
-        renderMarkdown(state.currentContent);
+        if (isCsvFile) {
+          renderCsv(state.currentContent);
+        } else {
+          renderMarkdown(state.currentContent);
+        }
         tabs[0].classList.add('active');
         tabs[1].classList.remove('active');
       }
