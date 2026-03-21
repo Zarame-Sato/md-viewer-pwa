@@ -830,6 +830,72 @@
     }
     .csv-header-cell { color: var(--accent); }
 
+    /* CSV 情報バー・ページネーション・統計 */
+    .csv-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 16px;
+      font-size: 12px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: rgba(108,138,255,0.04);
+    }
+    .csv-pagination {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+    }
+    .csv-pagination .btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .csv-page-info {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: 600;
+      min-width: 100px;
+      text-align: center;
+    }
+    /* describe() 統計パネル */
+    .csv-describe-toggle {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      background: rgba(108,138,255,0.12);
+      color: var(--accent);
+      border: 1px solid rgba(108,138,255,0.25);
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .csv-describe-toggle:hover { background: rgba(108,138,255,0.22); }
+    .csv-describe-panel {
+      padding: 8px 16px 12px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .csv-describe-panel table {
+      border-collapse: collapse;
+      font-size: 12px;
+      min-width: 100%;
+      background: var(--card-bg);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .csv-describe-panel th, .csv-describe-panel td {
+      border: 1px solid var(--border);
+      padding: 4px 8px;
+      white-space: nowrap;
+    }
+    .csv-describe-panel th {
+      background: rgba(52,211,153,0.1);
+      font-weight: 600;
+      color: #34d399;
+    }
+    .csv-describe-panel td { color: var(--text); }
+
     /* ===== 接続ステータス ===== */
     .status-badge {
       display: inline-flex;
@@ -2795,7 +2861,11 @@
     }
 
     // CSV用の状態
-    let csvData = null; // { rows: [[...], ...], headerRow: true }
+    let csvData = null; // { rows: [[...], ...] }
+    let csvPage = 0;           // 現在のページ（0始まり）
+    let csvPageSize = 1000;    // 1ページあたりの表示行数
+    let csvInitialRows = 10;   // 初期表示行数
+    let csvExpanded = false;   // 初期10行→展開済みか
 
     function renderCsv(text) {
       const viewer = document.getElementById('viewer-content');
@@ -2806,30 +2876,72 @@
       }
 
       csvData = { rows: rows };
+      csvPage = 0;
+      csvExpanded = false;
 
       // 列数を統一（最大列数に合わせる）
       const maxCols = Math.max(...rows.map(r => r.length));
       rows.forEach(r => { while (r.length < maxCols) r.push(''); });
 
-      // テーブル構築
+      // 初期表示は10行だけ
+      renderCsvPage();
+    }
+
+    function renderCsvPage() {
+      if (!csvData) return;
+      const viewer = document.getElementById('viewer-content');
+      const rows = csvData.rows;
+      const maxCols = rows[0].length;
+      const totalDataRows = rows.length - 1; // ヘッダー除く
+
+      // 表示範囲の計算
+      let startRow, endRow;
+      if (!csvExpanded) {
+        // 初期表示: 1〜10行目
+        startRow = 1;
+        endRow = Math.min(csvInitialRows + 1, rows.length);
+      } else {
+        // ページネーション表示
+        startRow = csvPage * csvPageSize + 1;
+        endRow = Math.min(startRow + csvPageSize, rows.length);
+      }
+
+      // ツールバー
       let html = '<div class="csv-toolbar">';
       html += '<button class="btn btn-secondary" onclick="csvAddRow()">+ 行追加</button>';
       html += '<button class="btn btn-secondary" onclick="csvAddCol()">+ 列追加</button>';
       html += '<button class="btn btn-secondary" onclick="csvDeleteRow()">- 行削除</button>';
       html += '<button class="btn btn-secondary" onclick="csvDeleteCol()">- 列削除</button>';
       html += '</div>';
+
+      // 行数情報 + describe ボタン
+      html += '<div class="csv-info">';
+      html += '<span>' + totalDataRows.toLocaleString() + ' 行 × ' + maxCols + ' 列</span>';
+      html += '<span>';
+      if (csvExpanded) {
+        html += '表示: ' + startRow.toLocaleString() + '〜' + (endRow - 1).toLocaleString() + ' 行目 ';
+      } else {
+        html += 'プレビュー: 先頭 ' + Math.min(csvInitialRows, totalDataRows) + ' 行 ';
+      }
+      html += '<button class="csv-describe-toggle" onclick="csvToggleDescribe()">describe()</button>';
+      html += '</span>';
+      html += '</div>';
+      // describe パネル（非表示時は空）
+      html += '<div id="csv-describe-container"></div>';
+
+      // テーブル構築
       html += '<div class="csv-table-wrapper"><table class="csv-table" id="csv-edit-table">';
 
-      // ヘッダー行（1行目）
+      // ヘッダー行（常に表示）
       html += '<thead><tr><th class="csv-row-num">#</th>';
       for (let c = 0; c < maxCols; c++) {
         html += '<th contenteditable="true" class="csv-cell csv-header-cell" data-row="0" data-col="' + c + '">' + escapeHtml(rows[0][c]) + '</th>';
       }
       html += '</tr></thead>';
 
-      // データ行
+      // データ行（現在のページ分だけ）
       html += '<tbody>';
-      for (let r = 1; r < rows.length; r++) {
+      for (let r = startRow; r < endRow; r++) {
         html += '<tr><td class="csv-row-num">' + r + '</td>';
         for (let c = 0; c < maxCols; c++) {
           html += '<td contenteditable="true" class="csv-cell" data-row="' + r + '" data-col="' + c + '">' + escapeHtml(rows[r][c]) + '</td>';
@@ -2837,6 +2949,22 @@
         html += '</tr>';
       }
       html += '</tbody></table></div>';
+
+      // ページネーション
+      html += '<div class="csv-pagination">';
+      if (!csvExpanded) {
+        // 初期10行表示 → 全件表示ボタン
+        if (totalDataRows > csvInitialRows) {
+          html += '<button class="btn btn-primary" onclick="csvExpandAll()">全 ' + totalDataRows.toLocaleString() + ' 行を表示（1000行ずつ）</button>';
+        }
+      } else {
+        // ページネーション
+        const totalPages = Math.ceil(totalDataRows / csvPageSize);
+        html += '<button class="btn btn-secondary" onclick="csvPrevPage()" ' + (csvPage <= 0 ? 'disabled' : '') + '>＜ 前</button>';
+        html += '<span class="csv-page-info">' + (csvPage + 1) + ' / ' + totalPages + ' ページ</span>';
+        html += '<button class="btn btn-secondary" onclick="csvNextPage()" ' + (endRow >= rows.length ? 'disabled' : '') + '>次 ＞</button>';
+      }
+      html += '</div>';
 
       viewer.innerHTML = html;
 
@@ -2847,28 +2975,178 @@
           const c = parseInt(this.dataset.col);
           if (csvData && csvData.rows[r]) {
             csvData.rows[r][c] = this.textContent;
-            // 内部状態を更新（保存・Push時に使う）
             state.currentContent = csvToString(csvData.rows);
             if (state.activeTabIndex >= 0 && state.activeTabIndex < state.openTabs.length) {
               state.openTabs[state.activeTabIndex].content = state.currentContent;
             }
           }
         });
-        // Tabキーで次のセルへ移動
         cell.addEventListener('keydown', function(e) {
           if (e.key === 'Tab') {
             e.preventDefault();
             const r = parseInt(this.dataset.row);
             const c = parseInt(this.dataset.col);
-            const maxCols = csvData.rows[0].length;
+            const cols = csvData.rows[0].length;
             let nextR = r, nextC = c + (e.shiftKey ? -1 : 1);
-            if (nextC >= maxCols) { nextC = 0; nextR++; }
-            if (nextC < 0) { nextC = maxCols - 1; nextR--; }
+            if (nextC >= cols) { nextC = 0; nextR++; }
+            if (nextC < 0) { nextC = cols - 1; nextR--; }
             const nextCell = document.querySelector('.csv-cell[data-row="' + nextR + '"][data-col="' + nextC + '"]');
             if (nextCell) nextCell.focus();
           }
         });
       });
+    }
+
+    // 初期10行 → 全件表示（1000行ずつ）に切り替え
+    function csvExpandAll() {
+      csvExpanded = true;
+      csvPage = 0;
+      renderCsvPage();
+    }
+
+    // 次の1000行へ
+    function csvNextPage() {
+      if (!csvData) return;
+      const totalPages = Math.ceil((csvData.rows.length - 1) / csvPageSize);
+      if (csvPage < totalPages - 1) {
+        csvPage++;
+        renderCsvPage();
+        // ページ切り替え時にテーブル先頭にスクロール
+        const table = document.getElementById('csv-edit-table');
+        if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    // 前の1000行へ
+    function csvPrevPage() {
+      if (csvPage > 0) {
+        csvPage--;
+        renderCsvPage();
+        const table = document.getElementById('csv-edit-table');
+        if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    // === describe() 統計機能 ===
+    let csvDescribeVisible = false;
+
+    function csvToggleDescribe() {
+      csvDescribeVisible = !csvDescribeVisible;
+      const container = document.getElementById('csv-describe-container');
+      if (!container) return;
+      if (!csvDescribeVisible) {
+        container.innerHTML = '';
+        return;
+      }
+      // describe を計算して表示
+      container.innerHTML = '<div class="csv-describe-panel">' + csvComputeDescribe() + '</div>';
+    }
+
+    function csvComputeDescribe() {
+      if (!csvData || csvData.rows.length < 2) return '<p style="color:var(--text-muted);padding:8px">データなし</p>';
+      const headers = csvData.rows[0];
+      const dataRows = csvData.rows.slice(1);
+      const numRows = dataRows.length;
+
+      // 各列ごとに統計を計算
+      const stats = headers.map((header, ci) => {
+        const vals = dataRows.map(r => r[ci] !== undefined ? r[ci] : '');
+        // 数値列かどうか判定
+        const nums = [];
+        let nullCount = 0;
+        const uniqueSet = new Set();
+        vals.forEach(v => {
+          const trimmed = ('' + v).trim();
+          uniqueSet.add(trimmed);
+          if (trimmed === '' || trimmed.toLowerCase() === 'nan' || trimmed.toLowerCase() === 'null' || trimmed === 'NA') {
+            nullCount++;
+          } else {
+            const n = Number(trimmed.replace(/,/g, ''));
+            if (!isNaN(n) && trimmed !== '') nums.push(n);
+          }
+        });
+
+        const isNumeric = nums.length > vals.length * 0.5; // 50%以上数値なら数値列
+
+        const stat = { name: header, count: numRows, nonNull: numRows - nullCount, unique: uniqueSet.size };
+
+        if (isNumeric && nums.length > 0) {
+          nums.sort((a, b) => a - b);
+          const sum = nums.reduce((a, b) => a + b, 0);
+          stat.type = '数値';
+          stat.mean = sum / nums.length;
+          stat.std = Math.sqrt(nums.reduce((s, x) => s + (x - stat.mean) ** 2, 0) / nums.length);
+          stat.min = nums[0];
+          stat.q25 = nums[Math.floor(nums.length * 0.25)];
+          stat.q50 = nums[Math.floor(nums.length * 0.5)];
+          stat.q75 = nums[Math.floor(nums.length * 0.75)];
+          stat.max = nums[nums.length - 1];
+        } else {
+          stat.type = '文字列';
+          // 最頻値
+          const freq = {};
+          vals.forEach(v => { const k = ('' + v).trim(); freq[k] = (freq[k] || 0) + 1; });
+          let topVal = '', topCount = 0;
+          Object.entries(freq).forEach(([k, c]) => { if (c > topCount) { topVal = k; topCount = c; } });
+          stat.top = topVal;
+          stat.topFreq = topCount;
+        }
+        return stat;
+      });
+
+      // テーブルを構築
+      // 数値列と文字列列を分けて表示
+      const numStats = stats.filter(s => s.type === '数値');
+      const strStats = stats.filter(s => s.type === '文字列');
+
+      let html = '';
+
+      // フォーマット関数
+      const fmt = (v) => {
+        if (v === undefined || v === null) return '-';
+        if (typeof v === 'number') {
+          if (Math.abs(v) >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+          if (Math.abs(v) < 0.01 && v !== 0) return v.toExponential(2);
+          return Number(v.toFixed(4)).toString();
+        }
+        return '' + v;
+      };
+
+      if (numStats.length > 0) {
+        html += '<div style="margin-bottom:8px;font-size:12px;color:var(--accent);font-weight:600">数値列（' + numStats.length + '列）</div>';
+        html += '<table><thead><tr><th>列名</th><th>count</th><th>non-null</th><th>mean</th><th>std</th><th>min</th><th>25%</th><th>50%</th><th>75%</th><th>max</th></tr></thead><tbody>';
+        numStats.forEach(s => {
+          html += '<tr><td style="font-weight:600">' + escapeHtml(s.name) + '</td>';
+          html += '<td>' + s.count.toLocaleString() + '</td>';
+          html += '<td>' + s.nonNull.toLocaleString() + '</td>';
+          html += '<td>' + fmt(s.mean) + '</td>';
+          html += '<td>' + fmt(s.std) + '</td>';
+          html += '<td>' + fmt(s.min) + '</td>';
+          html += '<td>' + fmt(s.q25) + '</td>';
+          html += '<td>' + fmt(s.q50) + '</td>';
+          html += '<td>' + fmt(s.q75) + '</td>';
+          html += '<td>' + fmt(s.max) + '</td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+      }
+
+      if (strStats.length > 0) {
+        html += '<div style="margin:12px 0 8px;font-size:12px;color:#34d399;font-weight:600">文字列列（' + strStats.length + '列）</div>';
+        html += '<table><thead><tr><th>列名</th><th>count</th><th>non-null</th><th>unique</th><th>最頻値</th><th>頻度</th></tr></thead><tbody>';
+        strStats.forEach(s => {
+          html += '<tr><td style="font-weight:600">' + escapeHtml(s.name) + '</td>';
+          html += '<td>' + s.count.toLocaleString() + '</td>';
+          html += '<td>' + s.nonNull.toLocaleString() + '</td>';
+          html += '<td>' + s.unique.toLocaleString() + '</td>';
+          html += '<td>' + escapeHtml(s.top.length > 30 ? s.top.substring(0, 30) + '…' : s.top) + '</td>';
+          html += '<td>' + s.topFreq.toLocaleString() + '</td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+      }
+
+      return html;
     }
 
     function csvAddRow() {
