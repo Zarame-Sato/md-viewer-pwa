@@ -2880,8 +2880,14 @@
       csvExpanded = false;
 
       // 列数を統一（最大列数に合わせる）
-      const maxCols = Math.max(...rows.map(r => r.length));
-      rows.forEach(r => { while (r.length < maxCols) r.push(''); });
+      // ※ スプレッド演算子(...) は大量行でスタックオーバーフローするので reduce で計算
+      let maxCols = 0;
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i].length > maxCols) maxCols = rows[i].length;
+      }
+      for (let i = 0; i < rows.length; i++) {
+        while (rows[i].length < maxCols) rows[i].push('');
+      }
 
       // 初期表示は10行だけ
       renderCsvPage();
