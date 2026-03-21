@@ -84,6 +84,13 @@
       top: 0;
       z-index: 100;
     }
+    /* ファイルタブ＋ボタン行をヘッダー直下に固定（スクロールしても消えない） */
+    body.viewer-mode .viewer-sticky-header {
+      position: sticky;
+      top: 56px; /* headerのmin-height分 */
+      z-index: 90;
+      background: var(--bg);
+    }
     body.viewer-mode nav {
       position: fixed;
       bottom: 0;
