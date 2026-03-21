@@ -19,7 +19,7 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <!-- コードのシンタックスハイライト -->
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/highlight.min.js"></script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/atom-one-dark.min.css">
   <!-- Mermaid 図表 -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <!-- 数式 (LaTeX) -->
@@ -797,6 +797,31 @@
     .nb-output { border-top: 1px solid var(--border); padding: 8px 12px; font-size: 12px; background: rgba(0,0,0,0.2); overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .nb-output pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
     .nb-output img { max-width: 100%; }
+
+    /* ===== コード行番号 ===== */
+    .code-viewer { padding: 8px; }
+    .code-viewer pre { margin: 0; border-radius: 8px; overflow: hidden; }
+    .code-viewer code { font-size: 13px; line-height: 1.6; }
+    .code-table { border-collapse: collapse; width: 100%; }
+    .code-table td { padding: 0; vertical-align: top; }
+    .code-line-nums {
+      width: 1px; white-space: nowrap;
+      padding: 10px 8px 10px 12px !important;
+      text-align: right;
+      color: rgba(255,255,255,0.2);
+      font-size: 12px;
+      line-height: 1.6;
+      user-select: none;
+      -webkit-user-select: none;
+      border-right: 1px solid rgba(255,255,255,0.06);
+    }
+    .code-line-nums div { font-family: ui-monospace, SFMono-Regular, monospace; }
+    .code-body {
+      padding: 10px 12px !important;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .code-body code { white-space: pre; display: block; }
 
     /* ===== CSV テーブルエディタ ===== */
     .csv-toolbar {
@@ -2734,16 +2759,30 @@
       viewer.innerHTML = '<div style="padding:16px"><pre style="white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.6;color:var(--text)">' + escapeHtml(text) + '</pre></div>';
     }
 
-    // コード表示（シンタックスハイライト付き）
-    function renderCode(code, lang) {
-      var viewer = document.getElementById('viewer-content');
+    // ハイライト済みHTMLに行番号をつけてテーブル形式で返す共通関数
+    function buildCodeHtml(source, lang) {
       var highlighted;
       try {
-        highlighted = hljs.highlight(code, { language: lang }).value;
+        highlighted = hljs.highlight(source, { language: lang }).value;
       } catch(e) {
-        highlighted = escapeHtml(code);
+        highlighted = escapeHtml(source);
       }
-      viewer.innerHTML = '<div style="padding:8px"><pre style="margin:0;border-radius:8px;overflow-x:auto;-webkit-overflow-scrolling:touch"><code class="hljs language-' + lang + '" style="font-size:13px;line-height:1.5">' + highlighted + '</code></pre></div>';
+      // 行分割して行番号を生成
+      var lines = source.split('\n');
+      var numHtml = '';
+      for (var i = 1; i <= lines.length; i++) {
+        numHtml += '<div>' + i + '</div>';
+      }
+      return '<pre class="hljs"><table class="code-table"><tr>' +
+        '<td class="code-line-nums">' + numHtml + '</td>' +
+        '<td class="code-body"><code class="hljs language-' + lang + '">' + highlighted + '</code></td>' +
+        '</tr></table></pre>';
+    }
+
+    // コード表示（シンタックスハイライト＋行番号）
+    function renderCode(code, lang) {
+      var viewer = document.getElementById('viewer-content');
+      viewer.innerHTML = '<div class="code-viewer">' + buildCodeHtml(code, lang) + '</div>';
     }
 
     // Jupyter Notebook 表示
@@ -2775,15 +2814,9 @@
               html += '<pre>' + escapeHtml(source) + '</pre>';
             }
           } else if (type === 'code') {
-            // コードセル → シンタックスハイライト
+            // コードセル → シンタックスハイライト＋行番号
             var lang = (nb.metadata && nb.metadata.kernelspec && nb.metadata.kernelspec.language) || 'python';
-            var highlighted;
-            try {
-              highlighted = hljs.highlight(source, { language: lang }).value;
-            } catch(e) {
-              highlighted = escapeHtml(source);
-            }
-            html += '<pre><code class="hljs language-' + lang + '">' + highlighted + '</code></pre>';
+            html += buildCodeHtml(source, lang);
           } else {
             html += '<pre>' + escapeHtml(source) + '</pre>';
           }
