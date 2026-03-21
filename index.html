@@ -2796,143 +2796,198 @@
     }
 
     // ============================================================
-    // CSV パース & レンダリング（表形式エディタ）
+    // CSV 遅延パース & レンダリング（大規模ファイル対応）
     // ============================================================
-    function parseCsv(text) {
-      // RFC 4180 準拠のCSVパーサー（ダブルクオート・改行対応）
-      const rows = [];
-      let current = '';
-      let inQuotes = false;
-      let row = [];
+    // 設計思想:
+    //   巨大CSV（数万〜数十万行）を開いたとき、全行をパースしない。
+    //   ① 高速プリスキャン（行の開始位置だけ記録）
+    //   ② 表示に必要な行だけオンデマンドでパース
+    //   ③ 編集操作が入ったら初めて全行パース（小さいファイル用）
+    // ============================================================
 
-      for (let i = 0; i < text.length; i++) {
-        const ch = text[i];
-        if (inQuotes) {
-          if (ch === '"') {
-            if (i + 1 < text.length && text[i + 1] === '"') {
-              current += '"';
-              i++; // エスケープされたダブルクオート
-            } else {
-              inQuotes = false;
-            }
+    // --- CSV 状態変数 ---
+    let csvRawText = null;       // 元テキスト（遅延パース用に保持）
+    let csvRowOffsets = null;    // 各行の開始位置の配列
+    let csvTotalRows = 0;       // ヘッダー含む総行数
+    let csvColCount = 0;        // 列数（ヘッダー基準）
+    let csvHeader = [];          // パース済みヘッダー行
+    let csvData = null;          // { rows: [[...], ...] } — 全行パース済みデータ（編集時のみ構築）
+    let csvPage = 0;
+    let csvPageSize = 1000;
+    let csvInitialRows = 10;
+    let csvExpanded = false;
+    let csvDescribeVisible = false;
+
+    // --- ① 高速プリスキャン: 行の開始位置を特定 ---
+    // クオート内の改行は行区切りとして扱わない（RFC 4180 準拠）
+    function csvBuildOffsets(text) {
+      var offsets = [0];
+      var inQ = false;
+      for (var i = 0; i < text.length; i++) {
+        var c = text.charCodeAt(i);
+        if (c === 34) { // "
+          if (inQ && i + 1 < text.length && text.charCodeAt(i + 1) === 34) {
+            i++; // "" エスケープ
           } else {
-            current += ch;
+            inQ = !inQ;
           }
-        } else {
-          if (ch === '"') {
-            inQuotes = true;
-          } else if (ch === ',') {
-            row.push(current);
-            current = '';
-          } else if (ch === '\r') {
-            // \r\n の場合は \n もスキップ
-            if (i + 1 < text.length && text[i + 1] === '\n') i++;
-            row.push(current);
-            current = '';
-            if (row.length > 0) rows.push(row);
-            row = [];
-          } else if (ch === '\n') {
-            row.push(current);
-            current = '';
-            if (row.length > 0) rows.push(row);
-            row = [];
-          } else {
-            current += ch;
+        } else if (!inQ) {
+          if (c === 13) { // \r
+            if (i + 1 < text.length && text.charCodeAt(i + 1) === 10) i++; // \r\n
+            if (i + 1 < text.length) offsets.push(i + 1);
+          } else if (c === 10) { // \n
+            if (i + 1 < text.length) offsets.push(i + 1);
           }
         }
       }
-      // 最後のフィールド
-      row.push(current);
-      if (row.length > 0 && !(row.length === 1 && row[0] === '')) rows.push(row);
+      return offsets;
+    }
 
+    // --- ② 1行分のテキストをセル配列にパース ---
+    function csvParseLine(line) {
+      var cells = [];
+      var cur = '';
+      var inQ = false;
+      for (var i = 0; i < line.length; i++) {
+        var ch = line[i];
+        if (inQ) {
+          if (ch === '"') {
+            if (i + 1 < line.length && line[i + 1] === '"') { cur += '"'; i++; }
+            else inQ = false;
+          } else { cur += ch; }
+        } else {
+          if (ch === '"') inQ = true;
+          else if (ch === ',') { cells.push(cur); cur = ''; }
+          else cur += ch;
+        }
+      }
+      cells.push(cur);
+      return cells;
+    }
+
+    // offset index → 行テキスト取得
+    function csvGetLine(idx) {
+      var start = csvRowOffsets[idx];
+      var end = idx + 1 < csvRowOffsets.length ? csvRowOffsets[idx + 1] : csvRawText.length;
+      // 末尾の改行を除去
+      var line = csvRawText.substring(start, end);
+      var last = line.length - 1;
+      while (last >= 0 && (line.charCodeAt(last) === 10 || line.charCodeAt(last) === 13)) last--;
+      return last < line.length - 1 ? line.substring(0, last + 1) : line;
+    }
+
+    // 指定範囲の行をパースして返す（startIdx〜endIdx-1）
+    function csvParseRange(startIdx, endIdx) {
+      var rows = [];
+      var limit = Math.min(endIdx, csvTotalRows);
+      for (var i = startIdx; i < limit; i++) {
+        var line = csvGetLine(i);
+        if (line !== '' || i === 0) {
+          var parsed = csvParseLine(line);
+          // 列数を揃える
+          while (parsed.length < csvColCount) parsed.push('');
+          rows.push(parsed);
+        }
+      }
       return rows;
     }
 
+    // --- ③ 全行パース（編集操作時に呼ぶ） ---
+    function csvEnsureFullParse() {
+      if (csvData && csvData.rows) return; // 既にパース済み
+      if (!csvRawText) return;
+      var allRows = csvParseRange(0, csvTotalRows);
+      csvData = { rows: allRows };
+    }
+
+    // CSV → 文字列（保存用）
     function csvToString(rows) {
-      return rows.map(row =>
-        row.map(cell => {
-          // カンマ、ダブルクオート、改行を含むセルはクオートで囲む
+      return rows.map(function(row) {
+        return row.map(function(cell) {
           if (cell.includes(',') || cell.includes('"') || cell.includes('\n') || cell.includes('\r')) {
             return '"' + cell.replace(/"/g, '""') + '"';
           }
           return cell;
-        }).join(',')
-      ).join('\n');
+        }).join(',');
+      }).join('\n');
     }
 
-    // CSV用の状態
-    let csvData = null; // { rows: [[...], ...] }
-    let csvPage = 0;           // 現在のページ（0始まり）
-    let csvPageSize = 1000;    // 1ページあたりの表示行数
-    let csvInitialRows = 10;   // 初期表示行数
-    let csvExpanded = false;   // 初期10行→展開済みか
-
+    // --- メイン: CSV 読み込み ---
     function renderCsv(text) {
-      const viewer = document.getElementById('viewer-content');
-      const rows = parseCsv(text);
-      if (rows.length === 0) {
-        viewer.innerHTML = '<div class="empty-state"><div class="icon">📊</div><p>CSV が空です</p></div>';
-        return;
-      }
+      var viewer = document.getElementById('viewer-content');
+      try {
+        // テキスト保持 & プリスキャン
+        csvRawText = text;
+        csvRowOffsets = csvBuildOffsets(text);
 
-      csvData = { rows: rows };
-      csvPage = 0;
-      csvExpanded = false;
+        // 末尾の空行を除外
+        while (csvRowOffsets.length > 1) {
+          var lastLine = csvGetLine(csvRowOffsets.length - 1);
+          if (lastLine.trim() === '') csvRowOffsets.pop();
+          else break;
+        }
+        csvTotalRows = csvRowOffsets.length;
 
-      // 列数を統一（最大列数に合わせる）
-      // ※ スプレッド演算子(...) は大量行でスタックオーバーフローするので reduce で計算
-      let maxCols = 0;
-      for (let i = 0; i < rows.length; i++) {
-        if (rows[i].length > maxCols) maxCols = rows[i].length;
-      }
-      for (let i = 0; i < rows.length; i++) {
-        while (rows[i].length < maxCols) rows[i].push('');
-      }
+        if (csvTotalRows === 0) {
+          viewer.innerHTML = '<div class="empty-state"><div class="icon">📊</div><p>CSV が空です</p></div>';
+          return;
+        }
 
-      // 初期表示は10行だけ
-      renderCsvPage();
+        // ヘッダー行をパース → 列数確定
+        csvHeader = csvParseLine(csvGetLine(0));
+        csvColCount = csvHeader.length;
+
+        // 全行パース済みデータはリセット（遅延パースモード）
+        csvData = null;
+        csvPage = 0;
+        csvExpanded = false;
+        csvDescribeVisible = false;
+
+        renderCsvPage();
+      } catch (e) {
+        viewer.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>CSV読み込みエラー: ' + escapeHtml(e.message) + '</p></div>';
+      }
     }
 
+    // --- ページ描画（表示分の行だけパース） ---
     function renderCsvPage() {
-      if (!csvData) return;
-      const viewer = document.getElementById('viewer-content');
-      const rows = csvData.rows;
-      const maxCols = rows[0].length;
-      const totalDataRows = rows.length - 1; // ヘッダー除く
+      if (!csvRawText || !csvRowOffsets) return;
+      var viewer = document.getElementById('viewer-content');
+      var totalDataRows = csvTotalRows - 1; // ヘッダー除く
 
-      // 表示範囲の計算
-      let startRow, endRow;
+      // 表示範囲（オフセットindex: 0=ヘッダー, 1〜=データ行）
+      var startIdx, endIdx;
       if (!csvExpanded) {
-        // 初期表示: 1〜10行目
-        startRow = 1;
-        endRow = Math.min(csvInitialRows + 1, rows.length);
+        startIdx = 1;
+        endIdx = Math.min(csvInitialRows + 1, csvTotalRows);
       } else {
-        // ページネーション表示
-        startRow = csvPage * csvPageSize + 1;
-        endRow = Math.min(startRow + csvPageSize, rows.length);
+        startIdx = csvPage * csvPageSize + 1;
+        endIdx = Math.min(startIdx + csvPageSize, csvTotalRows);
       }
+
+      // 表示分だけパース
+      var visibleRows = csvParseRange(startIdx, endIdx);
 
       // ツールバー
-      let html = '<div class="csv-toolbar">';
+      var html = '<div class="csv-toolbar">';
       html += '<button class="btn btn-secondary" onclick="csvAddRow()">+ 行追加</button>';
       html += '<button class="btn btn-secondary" onclick="csvAddCol()">+ 列追加</button>';
       html += '<button class="btn btn-secondary" onclick="csvDeleteRow()">- 行削除</button>';
       html += '<button class="btn btn-secondary" onclick="csvDeleteCol()">- 列削除</button>';
       html += '</div>';
 
-      // 行数情報 + describe ボタン
+      // 情報バー + describe ボタン
       html += '<div class="csv-info">';
-      html += '<span>' + totalDataRows.toLocaleString() + ' 行 × ' + maxCols + ' 列</span>';
+      html += '<span>' + totalDataRows.toLocaleString() + ' 行 × ' + csvColCount + ' 列</span>';
       html += '<span>';
       if (csvExpanded) {
-        html += '表示: ' + startRow.toLocaleString() + '〜' + (endRow - 1).toLocaleString() + ' 行目 ';
+        html += '表示: ' + startIdx.toLocaleString() + '〜' + (endIdx - 1).toLocaleString() + ' 行目 ';
       } else {
         html += 'プレビュー: 先頭 ' + Math.min(csvInitialRows, totalDataRows) + ' 行 ';
       }
       html += '<button class="csv-describe-toggle" onclick="csvToggleDescribe()">describe()</button>';
       html += '</span>';
       html += '</div>';
-      // describe パネル（非表示時は空）
       html += '<div id="csv-describe-container"></div>';
 
       // テーブル構築
@@ -2940,17 +2995,19 @@
 
       // ヘッダー行（常に表示）
       html += '<thead><tr><th class="csv-row-num">#</th>';
-      for (let c = 0; c < maxCols; c++) {
-        html += '<th contenteditable="true" class="csv-cell csv-header-cell" data-row="0" data-col="' + c + '">' + escapeHtml(rows[0][c]) + '</th>';
+      for (var c = 0; c < csvColCount; c++) {
+        html += '<th contenteditable="true" class="csv-cell csv-header-cell" data-row="0" data-col="' + c + '">' + escapeHtml(csvHeader[c] || '') + '</th>';
       }
       html += '</tr></thead>';
 
-      // データ行（現在のページ分だけ）
+      // データ行（表示分のみ）
       html += '<tbody>';
-      for (let r = startRow; r < endRow; r++) {
-        html += '<tr><td class="csv-row-num">' + r + '</td>';
-        for (let c = 0; c < maxCols; c++) {
-          html += '<td contenteditable="true" class="csv-cell" data-row="' + r + '" data-col="' + c + '">' + escapeHtml(rows[r][c]) + '</td>';
+      for (var i = 0; i < visibleRows.length; i++) {
+        var rowIdx = startIdx + i; // 元データでの行番号（1始まり）
+        var row = visibleRows[i];
+        html += '<tr><td class="csv-row-num">' + rowIdx + '</td>';
+        for (var c2 = 0; c2 < csvColCount; c2++) {
+          html += '<td contenteditable="true" class="csv-cell" data-row="' + rowIdx + '" data-col="' + c2 + '">' + escapeHtml(row[c2] || '') + '</td>';
         }
         html += '</tr>';
       }
@@ -2959,29 +3016,30 @@
       // ページネーション
       html += '<div class="csv-pagination">';
       if (!csvExpanded) {
-        // 初期10行表示 → 全件表示ボタン
         if (totalDataRows > csvInitialRows) {
           html += '<button class="btn btn-primary" onclick="csvExpandAll()">全 ' + totalDataRows.toLocaleString() + ' 行を表示（1000行ずつ）</button>';
         }
       } else {
-        // ページネーション
-        const totalPages = Math.ceil(totalDataRows / csvPageSize);
+        var totalPages = Math.ceil(totalDataRows / csvPageSize);
         html += '<button class="btn btn-secondary" onclick="csvPrevPage()" ' + (csvPage <= 0 ? 'disabled' : '') + '>＜ 前</button>';
         html += '<span class="csv-page-info">' + (csvPage + 1) + ' / ' + totalPages + ' ページ</span>';
-        html += '<button class="btn btn-secondary" onclick="csvNextPage()" ' + (endRow >= rows.length ? 'disabled' : '') + '>次 ＞</button>';
+        html += '<button class="btn btn-secondary" onclick="csvNextPage()" ' + (endIdx >= csvTotalRows ? 'disabled' : '') + '>次 ＞</button>';
       }
       html += '</div>';
 
       viewer.innerHTML = html;
 
-      // セル編集イベント
-      viewer.querySelectorAll('.csv-cell').forEach(cell => {
+      // セル編集イベント（インライン編集 → 全行パース発動）
+      viewer.querySelectorAll('.csv-cell').forEach(function(cell) {
         cell.addEventListener('blur', function() {
-          const r = parseInt(this.dataset.row);
-          const c = parseInt(this.dataset.col);
+          var r = parseInt(this.dataset.row);
+          var c = parseInt(this.dataset.col);
+          // 初回編集時に全行パースを実行
+          csvEnsureFullParse();
           if (csvData && csvData.rows[r]) {
             csvData.rows[r][c] = this.textContent;
             state.currentContent = csvToString(csvData.rows);
+            csvRawText = state.currentContent; // 遅延パース用テキストも更新
             if (state.activeTabIndex >= 0 && state.activeTabIndex < state.openTabs.length) {
               state.openTabs[state.activeTabIndex].content = state.currentContent;
             }
@@ -2990,125 +3048,117 @@
         cell.addEventListener('keydown', function(e) {
           if (e.key === 'Tab') {
             e.preventDefault();
-            const r = parseInt(this.dataset.row);
-            const c = parseInt(this.dataset.col);
-            const cols = csvData.rows[0].length;
-            let nextR = r, nextC = c + (e.shiftKey ? -1 : 1);
-            if (nextC >= cols) { nextC = 0; nextR++; }
-            if (nextC < 0) { nextC = cols - 1; nextR--; }
-            const nextCell = document.querySelector('.csv-cell[data-row="' + nextR + '"][data-col="' + nextC + '"]');
+            var r = parseInt(this.dataset.row);
+            var cc = parseInt(this.dataset.col);
+            var nextR = r, nextC = cc + (e.shiftKey ? -1 : 1);
+            if (nextC >= csvColCount) { nextC = 0; nextR++; }
+            if (nextC < 0) { nextC = csvColCount - 1; nextR--; }
+            var nextCell = document.querySelector('.csv-cell[data-row="' + nextR + '"][data-col="' + nextC + '"]');
             if (nextCell) nextCell.focus();
           }
         });
       });
     }
 
-    // 初期10行 → 全件表示（1000行ずつ）に切り替え
+    // ページ操作
     function csvExpandAll() {
       csvExpanded = true;
       csvPage = 0;
       renderCsvPage();
     }
-
-    // 次の1000行へ
     function csvNextPage() {
-      if (!csvData) return;
-      const totalPages = Math.ceil((csvData.rows.length - 1) / csvPageSize);
+      var totalDataRows = csvTotalRows - 1;
+      var totalPages = Math.ceil(totalDataRows / csvPageSize);
       if (csvPage < totalPages - 1) {
         csvPage++;
         renderCsvPage();
-        // ページ切り替え時にテーブル先頭にスクロール
-        const table = document.getElementById('csv-edit-table');
+        var table = document.getElementById('csv-edit-table');
         if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     }
-
-    // 前の1000行へ
     function csvPrevPage() {
       if (csvPage > 0) {
         csvPage--;
         renderCsvPage();
-        const table = document.getElementById('csv-edit-table');
+        var table = document.getElementById('csv-edit-table');
         if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     }
 
-    // === describe() 統計機能 ===
-    let csvDescribeVisible = false;
-
+    // === describe() 統計機能（遅延パース対応） ===
     function csvToggleDescribe() {
       csvDescribeVisible = !csvDescribeVisible;
-      const container = document.getElementById('csv-describe-container');
+      var container = document.getElementById('csv-describe-container');
       if (!container) return;
-      if (!csvDescribeVisible) {
-        container.innerHTML = '';
-        return;
-      }
-      // describe を計算して表示
-      container.innerHTML = '<div class="csv-describe-panel">' + csvComputeDescribe() + '</div>';
+      if (!csvDescribeVisible) { container.innerHTML = ''; return; }
+      container.innerHTML = '<div class="csv-describe-panel"><p style="color:var(--text-muted);padding:8px">統計を計算中…</p></div>';
+      // 非同期で計算（UIブロック回避）
+      setTimeout(function() {
+        var result = csvComputeDescribe();
+        var c2 = document.getElementById('csv-describe-container');
+        if (c2) c2.innerHTML = '<div class="csv-describe-panel">' + result + '</div>';
+      }, 50);
     }
 
     function csvComputeDescribe() {
-      if (!csvData || csvData.rows.length < 2) return '<p style="color:var(--text-muted);padding:8px">データなし</p>';
-      const headers = csvData.rows[0];
-      const dataRows = csvData.rows.slice(1);
-      const numRows = dataRows.length;
+      if (!csvRawText || csvTotalRows < 2) return '<p style="color:var(--text-muted);padding:8px">データなし</p>';
 
-      // 各列ごとに統計を計算
-      const stats = headers.map((header, ci) => {
-        const vals = dataRows.map(r => r[ci] !== undefined ? r[ci] : '');
-        // 数値列かどうか判定
-        const nums = [];
-        let nullCount = 0;
-        const uniqueSet = new Set();
-        vals.forEach(v => {
-          const trimmed = ('' + v).trim();
-          uniqueSet.add(trimmed);
-          if (trimmed === '' || trimmed.toLowerCase() === 'nan' || trimmed.toLowerCase() === 'null' || trimmed === 'NA') {
-            nullCount++;
-          } else {
-            const n = Number(trimmed.replace(/,/g, ''));
-            if (!isNaN(n) && trimmed !== '') nums.push(n);
-          }
-        });
-
-        const isNumeric = nums.length > vals.length * 0.5; // 50%以上数値なら数値列
-
-        const stat = { name: header, count: numRows, nonNull: numRows - nullCount, unique: uniqueSet.size };
-
-        if (isNumeric && nums.length > 0) {
-          nums.sort((a, b) => a - b);
-          const sum = nums.reduce((a, b) => a + b, 0);
-          stat.type = '数値';
-          stat.mean = sum / nums.length;
-          stat.std = Math.sqrt(nums.reduce((s, x) => s + (x - stat.mean) ** 2, 0) / nums.length);
-          stat.min = nums[0];
-          stat.q25 = nums[Math.floor(nums.length * 0.25)];
-          stat.q50 = nums[Math.floor(nums.length * 0.5)];
-          stat.q75 = nums[Math.floor(nums.length * 0.75)];
-          stat.max = nums[nums.length - 1];
-        } else {
-          stat.type = '文字列';
-          // 最頻値
-          const freq = {};
-          vals.forEach(v => { const k = ('' + v).trim(); freq[k] = (freq[k] || 0) + 1; });
-          let topVal = '', topCount = 0;
-          Object.entries(freq).forEach(([k, c]) => { if (c > topCount) { topVal = k; topCount = c; } });
-          stat.top = topVal;
-          stat.topFreq = topCount;
-        }
-        return stat;
+      // 列ごとに統計を直接計算（全行パースを避ける：行を1行ずつ読んで集計）
+      var numRows = csvTotalRows - 1;
+      var stats = csvHeader.map(function(name) {
+        return { name: name, count: numRows, nums: [], nullCount: 0, uniqueSet: new Set(), freq: {} };
       });
 
-      // テーブルを構築
-      // 数値列と文字列列を分けて表示
-      const numStats = stats.filter(s => s.type === '数値');
-      const strStats = stats.filter(s => s.type === '文字列');
+      // 1行ずつ読んで各列に振り分ける
+      for (var ri = 1; ri < csvTotalRows; ri++) {
+        var row = csvParseLine(csvGetLine(ri));
+        for (var ci = 0; ci < stats.length; ci++) {
+          var val = (ci < row.length ? row[ci] : '').trim();
+          var s = stats[ci];
+          s.uniqueSet.add(val);
+          if (val === '' || val.toLowerCase() === 'nan' || val.toLowerCase() === 'null' || val === 'NA') {
+            s.nullCount++;
+          } else {
+            var n = Number(val.replace(/,/g, ''));
+            if (!isNaN(n) && val !== '') s.nums.push(n);
+          }
+          s.freq[val] = (s.freq[val] || 0) + 1;
+        }
+      }
 
-      let html = '';
+      // 統計量を算出
+      stats.forEach(function(s) {
+        s.nonNull = s.count - s.nullCount;
+        s.unique = s.uniqueSet.size;
+        s.isNumeric = s.nums.length > s.count * 0.5;
+        if (s.isNumeric && s.nums.length > 0) {
+          s.nums.sort(function(a, b) { return a - b; });
+          var sum = 0; for (var i = 0; i < s.nums.length; i++) sum += s.nums[i];
+          s.mean = sum / s.nums.length;
+          var ssq = 0; for (var i = 0; i < s.nums.length; i++) ssq += (s.nums[i] - s.mean) * (s.nums[i] - s.mean);
+          s.std = Math.sqrt(ssq / s.nums.length);
+          s.min = s.nums[0];
+          s.q25 = s.nums[Math.floor(s.nums.length * 0.25)];
+          s.q50 = s.nums[Math.floor(s.nums.length * 0.5)];
+          s.q75 = s.nums[Math.floor(s.nums.length * 0.75)];
+          s.max = s.nums[s.nums.length - 1];
+        } else {
+          var topVal = '', topCount = 0;
+          var keys = Object.keys(s.freq);
+          for (var i = 0; i < keys.length; i++) {
+            if (s.freq[keys[i]] > topCount) { topVal = keys[i]; topCount = s.freq[keys[i]]; }
+          }
+          s.top = topVal;
+          s.topFreq = topCount;
+        }
+        // メモリ解放
+        s.nums = null; s.uniqueSet = null; s.freq = null;
+      });
 
-      // フォーマット関数
-      const fmt = (v) => {
+      var numStats = stats.filter(function(s) { return s.isNumeric; });
+      var strStats = stats.filter(function(s) { return !s.isNumeric; });
+
+      var fmt = function(v) {
         if (v === undefined || v === null) return '-';
         if (typeof v === 'number') {
           if (Math.abs(v) >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -3118,59 +3168,50 @@
         return '' + v;
       };
 
+      var html = '';
       if (numStats.length > 0) {
         html += '<div style="margin-bottom:8px;font-size:12px;color:var(--accent);font-weight:600">数値列（' + numStats.length + '列）</div>';
         html += '<table><thead><tr><th>列名</th><th>count</th><th>non-null</th><th>mean</th><th>std</th><th>min</th><th>25%</th><th>50%</th><th>75%</th><th>max</th></tr></thead><tbody>';
-        numStats.forEach(s => {
+        numStats.forEach(function(s) {
           html += '<tr><td style="font-weight:600">' + escapeHtml(s.name) + '</td>';
-          html += '<td>' + s.count.toLocaleString() + '</td>';
-          html += '<td>' + s.nonNull.toLocaleString() + '</td>';
-          html += '<td>' + fmt(s.mean) + '</td>';
-          html += '<td>' + fmt(s.std) + '</td>';
-          html += '<td>' + fmt(s.min) + '</td>';
-          html += '<td>' + fmt(s.q25) + '</td>';
-          html += '<td>' + fmt(s.q50) + '</td>';
-          html += '<td>' + fmt(s.q75) + '</td>';
-          html += '<td>' + fmt(s.max) + '</td>';
-          html += '</tr>';
+          html += '<td>' + s.count.toLocaleString() + '</td><td>' + s.nonNull.toLocaleString() + '</td>';
+          html += '<td>' + fmt(s.mean) + '</td><td>' + fmt(s.std) + '</td>';
+          html += '<td>' + fmt(s.min) + '</td><td>' + fmt(s.q25) + '</td><td>' + fmt(s.q50) + '</td><td>' + fmt(s.q75) + '</td><td>' + fmt(s.max) + '</td></tr>';
         });
         html += '</tbody></table>';
       }
-
       if (strStats.length > 0) {
         html += '<div style="margin:12px 0 8px;font-size:12px;color:#34d399;font-weight:600">文字列列（' + strStats.length + '列）</div>';
         html += '<table><thead><tr><th>列名</th><th>count</th><th>non-null</th><th>unique</th><th>最頻値</th><th>頻度</th></tr></thead><tbody>';
-        strStats.forEach(s => {
+        strStats.forEach(function(s) {
           html += '<tr><td style="font-weight:600">' + escapeHtml(s.name) + '</td>';
-          html += '<td>' + s.count.toLocaleString() + '</td>';
-          html += '<td>' + s.nonNull.toLocaleString() + '</td>';
+          html += '<td>' + s.count.toLocaleString() + '</td><td>' + s.nonNull.toLocaleString() + '</td>';
           html += '<td>' + s.unique.toLocaleString() + '</td>';
-          html += '<td>' + escapeHtml(s.top.length > 30 ? s.top.substring(0, 30) + '…' : s.top) + '</td>';
-          html += '<td>' + s.topFreq.toLocaleString() + '</td>';
-          html += '</tr>';
+          html += '<td>' + escapeHtml(s.top && s.top.length > 30 ? s.top.substring(0, 30) + '…' : (s.top || '')) + '</td>';
+          html += '<td>' + (s.topFreq || 0).toLocaleString() + '</td></tr>';
         });
         html += '</tbody></table>';
       }
-
       return html;
     }
 
+    // --- 編集系関数（全行パースが必要） ---
     function csvAddRow() {
+      csvEnsureFullParse();
       if (!csvData) return;
-      const cols = csvData.rows[0].length;
-      csvData.rows.push(new Array(cols).fill(''));
+      csvData.rows.push(new Array(csvColCount).fill(''));
       state.currentContent = csvToString(csvData.rows);
       renderCsv(state.currentContent);
     }
-
     function csvAddCol() {
+      csvEnsureFullParse();
       if (!csvData) return;
-      csvData.rows.forEach(row => row.push(''));
+      csvData.rows.forEach(function(row) { row.push(''); });
       state.currentContent = csvToString(csvData.rows);
       renderCsv(state.currentContent);
     }
-
     function csvDeleteRow() {
+      csvEnsureFullParse();
       if (!csvData || csvData.rows.length <= 1) {
         showToast('ヘッダー行は削除できません', 'error');
         return;
@@ -3179,13 +3220,13 @@
       state.currentContent = csvToString(csvData.rows);
       renderCsv(state.currentContent);
     }
-
     function csvDeleteCol() {
+      csvEnsureFullParse();
       if (!csvData || csvData.rows[0].length <= 1) {
         showToast('最後の列は削除できません', 'error');
         return;
       }
-      csvData.rows.forEach(row => row.pop());
+      csvData.rows.forEach(function(row) { row.pop(); });
       state.currentContent = csvToString(csvData.rows);
       renderCsv(state.currentContent);
     }

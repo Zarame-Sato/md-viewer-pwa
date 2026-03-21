@@ -1,5 +1,5 @@
 // Service Worker - オフラインでも閲覧可能にする
-const CACHE_NAME = 'md-viewer-v10';
+const CACHE_NAME = 'md-viewer-v11';
 const ASSETS_TO_CACHE = [
   './index.html',
   './manifest.json',
