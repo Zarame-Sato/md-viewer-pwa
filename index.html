@@ -1886,16 +1886,21 @@
           ? document.getElementById('editor-content').value
           : state.currentContent;
 
+        // NFC正規化（macOSのNFD形式 → GitHubのNFC形式に統一。重複ディレクトリ防止）
+        const nfcPath = filePath.normalize('NFC');
+
         // 1. 現在のファイルの SHA を取得（更新の場合に必要）
         let sha = null;
+        let isNewFile = true;
         try {
           const existing = await fetch(
-            'https://api.github.com/repos/' + targetRepo + '/contents/' + filePath + '?ref=' + state.githubBranch,
+            'https://api.github.com/repos/' + targetRepo + '/contents/' + nfcPath + '?ref=' + state.githubBranch,
             { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
           );
           if (existing.ok) {
             const data = await existing.json();
             sha = data.sha;
+            isNewFile = false;
           }
         } catch (e) { /* 新規ファイルの場合は SHA 不要 */ }
 
@@ -1908,7 +1913,7 @@
         if (sha) body.sha = sha;
 
         const res = await fetch(
-          'https://api.github.com/repos/' + targetRepo + '/contents/' + filePath,
+          'https://api.github.com/repos/' + targetRepo + '/contents/' + nfcPath,
           {
             method: 'PUT',
             headers: {
@@ -1921,11 +1926,18 @@
         );
 
         if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.message || res.status);
+          const errData = await res.json().catch(() => ({}));
+          throw new Error((errData.message || res.status) + ' [' + targetRepo + '/' + filePath + ' @' + state.githubBranch + ']');
         }
 
-        showToast(targetRepo + ' に push しました: ' + filePath, 'success');
+        const result = await res.json();
+        const commitUrl = result.commit && result.commit.html_url ? result.commit.html_url : '';
+        showToast(
+          (isNewFile ? '新規作成' : '更新') + ': ' + targetRepo + '/' + filePath +
+          ' (' + state.githubBranch + ')' +
+          (commitUrl ? '\n' + commitUrl : ''),
+          'success'
+        );
       } catch (err) {
         showToast('Push 失敗: ' + err.message, 'error');
       } finally {
@@ -1955,6 +1967,8 @@
         return;
       }
       const { repo: targetRepo, path: filePath } = resolved;
+      // NFC正規化（macOSのNFD形式 → GitHubのNFC形式に統一）
+      const nfcPath = filePath.normalize('NFC');
 
       const btn = document.getElementById('btn-pull');
       btn.disabled = true;
@@ -1963,7 +1977,7 @@
       try {
         // 1. GitHub からファイル内容を取得
         const ghRes = await fetch(
-          'https://api.github.com/repos/' + targetRepo + '/contents/' + filePath + '?ref=' + state.githubBranch,
+          'https://api.github.com/repos/' + targetRepo + '/contents/' + nfcPath + '?ref=' + state.githubBranch,
           { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
         );
         if (!ghRes.ok) {
@@ -1976,7 +1990,7 @@
         let ghLastModified = null;
         try {
           const commitsRes = await fetch(
-            'https://api.github.com/repos/' + targetRepo + '/commits?path=' + encodeURIComponent(filePath) + '&sha=' + state.githubBranch + '&per_page=1',
+            'https://api.github.com/repos/' + targetRepo + '/commits?path=' + encodeURIComponent(nfcPath) + '&sha=' + state.githubBranch + '&per_page=1',
             { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
           );
           if (commitsRes.ok) {
@@ -2107,9 +2121,9 @@
 
           for (const ghFile of targetFiles) {
             try {
-              // Drive側で対応ファイルを探す
-              const drivePath = folder + '/' + ghFile.path;
-              const driveFile = state.files.find(f => f.drivePath === drivePath);
+              // Drive側で対応ファイルを探す（NFC正規化して比較。macOS NFD ≠ GitHub NFC 対策）
+              const drivePath = (folder + '/' + ghFile.path).normalize('NFC');
+              const driveFile = state.files.find(f => (f.drivePath || '').normalize('NFC') === drivePath);
               if (!driveFile) { skipped++; continue; }
 
               // GitHub のコミット日時
