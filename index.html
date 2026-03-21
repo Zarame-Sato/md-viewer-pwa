@@ -1622,7 +1622,12 @@
           path: '/drive/v3/files/' + fileId,
           params: { alt: 'media' }
         });
-        return response.body;
+        // gapi の response.body はバイナリ文字列（1char=1byte）
+        // UTF-8日本語を正しくデコードするために TextDecoder を使う
+        var raw = response.body;
+        var bytes = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) & 0xff;
+        return new TextDecoder('utf-8').decode(bytes);
       }
       // フォールバック: gapi 未読み込み時は fetch を試す
       const res = await fetch(
