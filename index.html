@@ -1711,6 +1711,10 @@
         state.githubToken = token;
         state.githubRepos = allRepos.map(r => r.full_name);
 
+        // 既存の datalist を削除して再構築
+        const oldDl = document.getElementById('github-repo-datalist');
+        if (oldDl) oldDl.remove();
+
         // マッピングUIを構築
         buildMappingUI();
 
@@ -1769,24 +1773,30 @@
       arrow.textContent = '→';
       arrow.style.cssText = 'color:var(--text-muted);font-size:16px;flex-shrink:0;';
 
-      // リポジトリ選択ドロップダウン
-      const repoSelect = document.createElement('select');
-      repoSelect.style.cssText = 'flex:1.5;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin:0;min-width:0;';
-      repoSelect.className = 'mapping-repo';
-      repoSelect.innerHTML = '<option value="">-- 選択 --</option>';
-      state.githubRepos.forEach(r => {
-        const opt = document.createElement('option');
-        opt.value = r;
-        opt.textContent = r;
-        if (r === repoFullName) opt.selected = true;
-        repoSelect.appendChild(opt);
-      });
-      // リポジトリ選択時 → "owner/repo" の repo 部分を Drive フォルダ名に自動セット
-      repoSelect.addEventListener('change', () => {
-        const selected = repoSelect.value;
+      // リポジトリ入力（datalist で候補表示 + 手動入力可）
+      const repoInput = document.createElement('input');
+      repoInput.type = 'text';
+      repoInput.placeholder = 'owner/repo を入力 or 選択';
+      repoInput.value = repoFullName;
+      repoInput.style.cssText = 'flex:1.5;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin:0;min-width:0;';
+      repoInput.className = 'mapping-repo';
+      repoInput.setAttribute('list', 'github-repo-datalist');
+      // datalist は1つだけ作成して再利用
+      if (!document.getElementById('github-repo-datalist')) {
+        const dl = document.createElement('datalist');
+        dl.id = 'github-repo-datalist';
+        (state.githubRepos || []).forEach(r => {
+          const opt = document.createElement('option');
+          opt.value = r;
+          dl.appendChild(opt);
+        });
+        document.body.appendChild(dl);
+      }
+      // 入力時 → "owner/repo" の repo 部分を Drive フォルダ名に自動セット
+      repoInput.addEventListener('change', () => {
+        const selected = repoInput.value.trim();
         if (selected && !folderInput.value) {
-          // フォルダ名が空の場合のみ自動入力
-          folderInput.value = selected.split('/')[1] || '';
+          folderInput.value = selected.split('/').pop() || '';
         }
       });
 
@@ -1796,7 +1806,7 @@
       delBtn.style.cssText = 'width:32px;height:32px;border:none;border-radius:6px;background:var(--danger);color:white;cursor:pointer;font-size:14px;flex-shrink:0;';
       delBtn.onclick = () => row.remove();
 
-      row.appendChild(repoSelect);
+      row.appendChild(repoInput);
       row.appendChild(arrow);
       row.appendChild(folderInput);
       row.appendChild(delBtn);
@@ -1820,7 +1830,7 @@
       let validCount = 0;
       rows.forEach(row => {
         const folder = row.querySelector('.mapping-folder').value.trim();
-        const repo = row.querySelector('.mapping-repo').value;
+        const repo = row.querySelector('.mapping-repo').value.trim();
         if (folder && repo) {
           mappings[folder] = repo;
           validCount++;
