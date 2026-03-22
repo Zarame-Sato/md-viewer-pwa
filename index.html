@@ -2215,6 +2215,60 @@
     // GitHub から Pull（リポジトリ単位）
     // マッピングされた全リポジトリの全ファイルを比較して新しい方で同期
     // ============================================================
+    // Drive にフォルダを作成するヘルパー（親フォルダID指定）
+    async function createDriveFolder(name, parentId) {
+      const res = await fetch(
+        'https://www.googleapis.com/drive/v3/files',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + state.gdriveToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: name,
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: parentId ? [parentId] : []
+          })
+        }
+      );
+      if (!res.ok) throw new Error('フォルダ作成エラー: ' + res.status);
+      return await res.json();
+    }
+
+    // Drive にフォルダパスを再帰的に作成し、最終フォルダのIDを返す
+    // folderMap: Map<id, {name, parentId}> — 既存の Drive フォルダ一覧
+    // createdCache: Map<"parentId/name", id> — 今回作成済みのキャッシュ
+    async function ensureDriveFolderPath(pathParts, rootId, folderMap, createdCache) {
+      let currentParentId = rootId || null;
+      for (const part of pathParts) {
+        const cacheKey = (currentParentId || 'root') + '/' + part;
+        if (createdCache.has(cacheKey)) {
+          currentParentId = createdCache.get(cacheKey);
+          continue;
+        }
+        // 既存フォルダを探す
+        let found = null;
+        for (const [fId, fData] of folderMap) {
+          if (fData.name === part && fData.parentId === currentParentId) {
+            found = fId;
+            break;
+          }
+        }
+        if (found) {
+          currentParentId = found;
+          createdCache.set(cacheKey, found);
+        } else {
+          // 新規作成
+          const created = await createDriveFolder(part, currentParentId);
+          folderMap.set(created.id, { name: part, parentId: currentParentId });
+          createdCache.set(cacheKey, created.id);
+          currentParentId = created.id;
+        }
+      }
+      return currentParentId;
+    }
+
     async function pullAllFromGitHub() {
       if (!state.githubToken || Object.keys(state.repoMappings).length === 0) {
         showToast('GitHub が未接続です', 'error');
@@ -2225,17 +2279,56 @@
         return;
       }
 
-      if (!confirm('GitHub から全ファイルを Pull します。\nDrive より新しいファイルのみ上書きされます。\n\n続行しますか？')) {
+      if (!confirm('GitHub から全ファイルを Pull します。\n・Drive に無いファイルは新規作成されます\n・既存ファイルは GitHub が新しい場合のみ上書きします\n・Drive の方が新しいファイルはスキップします\n\n続行しますか？')) {
         return;
       }
 
       showToast('リポジトリ Pull を開始します...', 'info');
       let updated = 0;
+      let created = 0;
       let skipped = 0;
       let errors = 0;
 
+      // Drive の全フォルダ一覧を取得（フォルダ作成の重複チェック用）
+      let folderMap = new Map();
+      try {
+        const allFolders = await driveListAll(
+          "mimeType='application/vnd.google-apps.folder' and trashed=false",
+          'id,name,parents'
+        );
+        for (const f of allFolders) {
+          folderMap.set(f.id, { name: f.name, parentId: (f.parents && f.parents[0]) || null });
+        }
+      } catch (e) {
+        showToast('Drive フォルダ取得に失敗: ' + e.message, 'error');
+        return;
+      }
+
+      // マッピングのトップレベルフォルダIDを特定
+      const rootId = state.gdriveFolderId || null;
+      const mappingFolderIds = {};
+      for (const folderName of Object.keys(state.repoMappings)) {
+        for (const [fId, fData] of folderMap) {
+          if (fData.name === folderName && (!rootId || fData.parentId === rootId)) {
+            mappingFolderIds[folderName] = fId;
+            break;
+          }
+        }
+      }
+
+      // 今回の実行で作成したフォルダのキャッシュ
+      const createdFolderCache = new Map();
+
       for (const [folder, repo] of Object.entries(state.repoMappings)) {
         try {
+          // マッピング先のトップフォルダが無ければ作成
+          if (!mappingFolderIds[folder]) {
+            const topFolder = await createDriveFolder(folder, rootId);
+            folderMap.set(topFolder.id, { name: folder, parentId: rootId });
+            mappingFolderIds[folder] = topFolder.id;
+          }
+          const topFolderId = mappingFolderIds[folder];
+
           // リポジトリのファイルツリーを取得
           const treeRes = await fetch(
             'https://api.github.com/repos/' + repo + '/git/trees/' + state.githubBranch + '?recursive=1',
@@ -2244,7 +2337,7 @@
           if (!treeRes.ok) { errors++; continue; }
           const treeData = await treeRes.json();
 
-          // md, csv ファイルだけ対象
+          // 対象ファイル（md, csv, txt, py, ipynb）
           const targetFiles = (treeData.tree || []).filter(f =>
             f.type === 'blob' && (f.path.endsWith('.md') || f.path.endsWith('.csv') || f.path.endsWith('.txt') || f.path.endsWith('.py') || f.path.endsWith('.ipynb'))
           );
@@ -2254,83 +2347,136 @@
               // Drive側で対応ファイルを探す（NFC正規化して比較。macOS NFD ≠ GitHub NFC 対策）
               const drivePath = (folder + '/' + ghFile.path).normalize('NFC');
               const driveFile = state.files.find(f => (f.drivePath || '').normalize('NFC') === drivePath);
-              if (!driveFile) { skipped++; continue; }
 
-              // GitHub のコミット日時
-              let ghTime = null;
-              try {
-                const cRes = await fetch(
-                  'https://api.github.com/repos/' + repo + '/commits?path=' + encodeURIComponent(ghFile.path) + '&sha=' + state.githubBranch + '&per_page=1',
+              if (driveFile) {
+                // ── 既存ファイル: タイムスタンプ比較でコンフリクト回避 ──
+                let ghTime = null;
+                try {
+                  const cRes = await fetch(
+                    'https://api.github.com/repos/' + repo + '/commits?path=' + encodeURIComponent(ghFile.path) + '&sha=' + state.githubBranch + '&per_page=1',
+                    { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+                  );
+                  if (cRes.ok) {
+                    const commits = await cRes.json();
+                    if (commits.length > 0) ghTime = new Date(commits[0].commit.committer.date);
+                  }
+                } catch (e) {}
+
+                let driveTime = null;
+                try {
+                  const mRes = await fetch(
+                    'https://www.googleapis.com/drive/v3/files/' + driveFile.id + '?fields=modifiedTime',
+                    { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+                  );
+                  if (mRes.ok) {
+                    const meta = await mRes.json();
+                    driveTime = new Date(meta.modifiedTime);
+                  }
+                } catch (e) {}
+
+                // Drive の方が新しければスキップ（コンフリクト回避）
+                if (ghTime && driveTime && driveTime >= ghTime) {
+                  skipped++;
+                  continue;
+                }
+
+                // GitHub の内容を取得して Drive に上書き
+                const contentRes = await fetch(
+                  'https://api.github.com/repos/' + repo + '/contents/' + encodeURIComponent(ghFile.path).replace(/%2F/g, '/') + '?ref=' + state.githubBranch,
                   { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
                 );
-                if (cRes.ok) {
-                  const commits = await cRes.json();
-                  if (commits.length > 0) ghTime = new Date(commits[0].commit.committer.date);
-                }
-              } catch (e) {}
+                if (!contentRes.ok) { errors++; continue; }
+                const contentData = await contentRes.json();
+                const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
 
-              // Drive の更新日時
-              let driveTime = null;
-              try {
-                const mRes = await fetch(
-                  'https://www.googleapis.com/drive/v3/files/' + driveFile.id + '?fields=modifiedTime',
-                  { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+                const boundary = '----MDViewerBoundary' + Date.now();
+                const mimeType = getFileMime(ghFile.path);
+                const metadata = JSON.stringify({ mimeType: mimeType });
+                const body =
+                  '--' + boundary + '\r\n' +
+                  'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+                  metadata + '\r\n' +
+                  '--' + boundary + '\r\n' +
+                  'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
+                  content + '\r\n' +
+                  '--' + boundary + '--';
+
+                const upRes = await fetch(
+                  'https://www.googleapis.com/upload/drive/v3/files/' + driveFile.id + '?uploadType=multipart',
+                  {
+                    method: 'PATCH',
+                    headers: {
+                      'Authorization': 'Bearer ' + state.gdriveToken,
+                      'Content-Type': 'multipart/related; boundary=' + boundary
+                    },
+                    body: body
+                  }
                 );
-                if (mRes.ok) {
-                  const meta = await mRes.json();
-                  driveTime = new Date(meta.modifiedTime);
-                }
-              } catch (e) {}
+                if (upRes.ok) updated++;
+                else errors++;
 
-              // Drive の方が新しければスキップ（コンフリクト回避）
-              if (ghTime && driveTime && driveTime >= ghTime) {
-                skipped++;
-                continue;
+              } else {
+                // ── 新規ファイル: Drive にフォルダ階層を作成してファイルを新規作成 ──
+                const pathSegments = ghFile.path.split('/');
+                const fileName = pathSegments.pop();
+                // フォルダ階層を確保（サブフォルダがある場合）
+                let parentFolderId = topFolderId;
+                if (pathSegments.length > 0) {
+                  parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
+                }
+
+                // GitHub の内容を取得
+                const contentRes = await fetch(
+                  'https://api.github.com/repos/' + repo + '/contents/' + encodeURIComponent(ghFile.path).replace(/%2F/g, '/') + '?ref=' + state.githubBranch,
+                  { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+                );
+                if (!contentRes.ok) { errors++; continue; }
+                const contentData = await contentRes.json();
+                const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
+
+                // Drive に新規作成
+                const boundary = '----MDViewerBoundary' + Date.now();
+                const mimeType = getFileMime(fileName);
+                const metadata = JSON.stringify({
+                  name: fileName,
+                  mimeType: mimeType,
+                  parents: [parentFolderId]
+                });
+                const body =
+                  '--' + boundary + '\r\n' +
+                  'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+                  metadata + '\r\n' +
+                  '--' + boundary + '\r\n' +
+                  'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
+                  content + '\r\n' +
+                  '--' + boundary + '--';
+
+                const upRes = await fetch(
+                  'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+                  {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': 'Bearer ' + state.gdriveToken,
+                      'Content-Type': 'multipart/related; boundary=' + boundary
+                    },
+                    body: body
+                  }
+                );
+                if (upRes.ok) created++;
+                else errors++;
               }
-
-              // GitHub の内容を取得
-              const contentRes = await fetch(
-                'https://api.github.com/repos/' + repo + '/contents/' + ghFile.path + '?ref=' + state.githubBranch,
-                { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
-              );
-              if (!contentRes.ok) { errors++; continue; }
-              const contentData = await contentRes.json();
-              const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
-
-              // Drive に上書き
-              const boundary = '----MDViewerBoundary' + Date.now();
-              const mimeType = getFileMime(ghFile.path);
-              const metadata = JSON.stringify({ mimeType: mimeType });
-              const body =
-                '--' + boundary + '\r\n' +
-                'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-                metadata + '\r\n' +
-                '--' + boundary + '\r\n' +
-                'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
-                content + '\r\n' +
-                '--' + boundary + '--';
-
-              const upRes = await fetch(
-                'https://www.googleapis.com/upload/drive/v3/files/' + driveFile.id + '?uploadType=multipart',
-                {
-                  method: 'PATCH',
-                  headers: {
-                    'Authorization': 'Bearer ' + state.gdriveToken,
-                    'Content-Type': 'multipart/related; boundary=' + boundary
-                  },
-                  body: body
-                }
-              );
-              if (upRes.ok) updated++;
-              else errors++;
             } catch (e) { errors++; }
           }
         } catch (e) { errors++; }
       }
 
-      showToast('Pull 完了: ' + updated + '件更新 / ' + skipped + '件スキップ' + (errors > 0 ? ' / ' + errors + '件エラー' : ''), updated > 0 ? 'success' : 'info');
+      var msg = 'Pull 完了: ';
+      if (created > 0) msg += created + '件新規作成 / ';
+      msg += updated + '件更新 / ' + skipped + '件スキップ';
+      if (errors > 0) msg += ' / ' + errors + '件エラー';
+      showToast(msg, (updated > 0 || created > 0) ? 'success' : 'info');
       // ファイル一覧を再取得
-      if (updated > 0) refreshFiles();
+      if (updated > 0 || created > 0) refreshFiles();
     }
 
     // ============================================================
