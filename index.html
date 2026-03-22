@@ -3709,7 +3709,23 @@
     // ============================================================
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js')
-        .then(() => console.log('Service Worker 登録完了'))
+        .then(reg => {
+          console.log('Service Worker 登録完了');
+          // 新しい SW が見つかったら自動で有効化してリロード
+          reg.addEventListener('updatefound', () => {
+            const newSW = reg.installing;
+            if (newSW) {
+              newSW.addEventListener('statechange', () => {
+                if (newSW.state === 'activated' && navigator.serviceWorker.controller) {
+                  showToast('アプリが更新されました。リロードします…', 'success');
+                  setTimeout(() => location.reload(), 1000);
+                }
+              });
+            }
+          });
+          // 起動時に毎回更新チェック
+          reg.update();
+        })
         .catch(err => console.warn('SW 登録失敗:', err));
     }
 

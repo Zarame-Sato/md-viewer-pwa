@@ -1,5 +1,5 @@
 // Service Worker - オフラインでも閲覧可能にする
-const CACHE_NAME = 'folio-v15';
+const CACHE_NAME = 'folio-v16';
 const ASSETS_TO_CACHE = [
   './index.html',
   './manifest.json',
@@ -24,9 +24,8 @@ self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
       Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    )
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 // ネットワーク優先、失敗時はキャッシュから返す
