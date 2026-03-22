@@ -1647,9 +1647,16 @@
           path: '/drive/v3/files/' + fileId,
           params: { alt: 'media' }
         });
-        // gapi の response.body はバイナリ文字列（1char=1byte）
-        // UTF-8日本語を正しくデコードするために TextDecoder を使う
+        // gapi の response.body はバイナリ文字列（1char=1byte）の場合と、
+        // iOS Safari など一部環境では既にデコード済み Unicode 文字列の場合がある。
+        // charCode > 255 の文字があれば既にデコード済みなのでそのまま返す。
         var raw = response.body;
+        var alreadyDecoded = false;
+        for (var i = 0; i < raw.length; i++) {
+          if (raw.charCodeAt(i) > 255) { alreadyDecoded = true; break; }
+        }
+        if (alreadyDecoded) return raw;
+        // バイナリ文字列 → UTF-8 デコード
         var bytes = new Uint8Array(raw.length);
         for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) & 0xff;
         return new TextDecoder('utf-8').decode(bytes);
@@ -1660,7 +1667,9 @@
         { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
       );
       if (!res.ok) throw new Error('Drive ファイル読み込みエラー: ' + res.status);
-      return await res.text();
+      // ArrayBuffer + TextDecoder で確実に UTF-8 デコード
+      var buf = await res.arrayBuffer();
+      return new TextDecoder('utf-8').decode(buf);
     }
 
     // ============================================================
