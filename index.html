@@ -1054,22 +1054,19 @@
             <button type="submit" class="btn btn-primary" id="btn-fetch-repos">リポジトリ一覧を取得</button>
           </form>
 
-          <!-- PAT 入力後に表示されるマッピング設定エリア -->
+          <!-- PAT 入力後に表示されるリポジトリ選択エリア -->
           <div id="github-repo-section" style="display:none;">
             <label>ブランチ（全リポジトリ共通）</label>
             <input type="text" id="github-branch" placeholder="main" value="main">
 
-            <label style="margin-top:12px;">GitHub リポジトリ → Drive フォルダ マッピング</label>
+            <label style="margin-top:12px;">同期するリポジトリを選択</label>
             <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
-              リポジトリを選ぶと Drive フォルダ名が自動で入ります。<br>
-              必要に応じてフォルダ名を修正してください。
+              チェックしたリポジトリが Drive の同名フォルダと自動で連携します。
             </p>
-            <div id="repo-mapping-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
+            <input type="text" id="repo-search" placeholder="リポジトリを検索…" style="margin-bottom:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;width:100%;box-sizing:border-box;" oninput="filterRepoList()">
+            <div id="repo-checkbox-list" style="max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;margin-bottom:12px;border:1px solid var(--border);border-radius:8px;padding:8px;"></div>
 
-            <div style="display:flex;gap:8px;">
-              <button class="btn btn-secondary" onclick="addMappingRow()">＋ マッピング追加</button>
-              <button class="btn btn-primary" onclick="connectGitHub()">接続する</button>
-            </div>
+            <button class="btn btn-primary" onclick="connectGitHub()">接続する</button>
           </div>
         </div>
 
@@ -1711,12 +1708,8 @@
         state.githubToken = token;
         state.githubRepos = allRepos.map(r => r.full_name);
 
-        // 既存の datalist を削除して再構築
-        const oldDl = document.getElementById('github-repo-datalist');
-        if (oldDl) oldDl.remove();
-
-        // マッピングUIを構築
-        buildMappingUI();
+        // チェックボックスUIを構築
+        buildRepoCheckboxUI();
 
         // リポジトリ選択セクションを表示
         document.getElementById('github-repo-section').style.display = '';
@@ -1730,87 +1723,49 @@
     }
 
     // ============================================================
-    // マッピングUI: Drive フォルダ名 ↔ GitHub リポジトリの対応表を構築
+    // リポジトリ選択UI: チェックボックスリストを構築
     // ============================================================
-    function buildMappingUI() {
-      const container = document.getElementById('repo-mapping-list');
+    function buildRepoCheckboxUI() {
+      const container = document.getElementById('repo-checkbox-list');
       container.innerHTML = '';
 
-      // 既存のマッピングがあればそれを表示
-      const existingMappings = state.repoMappings || {};
-      const folderNames = Object.keys(existingMappings);
+      // 既存マッピングからチェック済みリポジトリを特定
+      const checkedRepos = new Set(Object.values(state.repoMappings || {}));
 
-      if (folderNames.length > 0) {
-        // 保存済みマッピングを復元
-        folderNames.forEach(folder => {
-          addMappingRow(folder, existingMappings[folder]);
-        });
-      } else {
-        // 初回: 空行を1つ（リポジトリを選べばフォルダ名が自動入力される）
-        addMappingRow('', '');
-      }
+      (state.githubRepos || []).forEach(repoFullName => {
+        const repoName = repoFullName.split('/').pop();
+        const label = document.createElement('label');
+        label.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:14px;color:var(--text);';
+        label.className = 'repo-checkbox-row';
+        label.dataset.repo = repoFullName.toLowerCase();
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = repoFullName;
+        cb.style.cssText = 'width:18px;height:18px;flex-shrink:0;';
+        cb.checked = checkedRepos.has(repoFullName);
+
+        const nameSpan = document.createElement('span');
+        nameSpan.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        nameSpan.textContent = repoFullName;
+
+        const folderHint = document.createElement('span');
+        folderHint.style.cssText = 'margin-left:auto;font-size:11px;color:var(--text-muted);flex-shrink:0;';
+        folderHint.textContent = '→ ' + repoName;
+
+        label.appendChild(cb);
+        label.appendChild(nameSpan);
+        label.appendChild(folderHint);
+        container.appendChild(label);
+      });
     }
 
-    // マッピング行を1つ追加する
-    function addMappingRow(folderName, repoFullName) {
-      folderName = folderName || '';
-      repoFullName = repoFullName || '';
-      const container = document.getElementById('repo-mapping-list');
-
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;gap:8px;align-items:center;';
-
-      // Drive フォルダ名入力
-      const folderInput = document.createElement('input');
-      folderInput.type = 'text';
-      folderInput.placeholder = 'Drive フォルダ名';
-      folderInput.value = folderName;
-      folderInput.style.cssText = 'flex:1;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin:0;min-width:0;';
-      folderInput.className = 'mapping-folder';
-
-      // → ラベル
-      const arrow = document.createElement('span');
-      arrow.textContent = '→';
-      arrow.style.cssText = 'color:var(--text-muted);font-size:16px;flex-shrink:0;';
-
-      // リポジトリ入力（datalist で候補表示 + 手動入力可）
-      const repoInput = document.createElement('input');
-      repoInput.type = 'text';
-      repoInput.placeholder = 'owner/repo を入力 or 選択';
-      repoInput.value = repoFullName;
-      repoInput.style.cssText = 'flex:1.5;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin:0;min-width:0;';
-      repoInput.className = 'mapping-repo';
-      repoInput.setAttribute('list', 'github-repo-datalist');
-      // datalist は1つだけ作成して再利用
-      if (!document.getElementById('github-repo-datalist')) {
-        const dl = document.createElement('datalist');
-        dl.id = 'github-repo-datalist';
-        (state.githubRepos || []).forEach(r => {
-          const opt = document.createElement('option');
-          opt.value = r;
-          dl.appendChild(opt);
-        });
-        document.body.appendChild(dl);
-      }
-      // 入力時 → "owner/repo" の repo 部分を Drive フォルダ名に自動セット
-      repoInput.addEventListener('change', () => {
-        const selected = repoInput.value.trim();
-        if (selected && !folderInput.value) {
-          folderInput.value = selected.split('/').pop() || '';
-        }
+    // リポジトリ検索フィルタ
+    function filterRepoList() {
+      const query = (document.getElementById('repo-search').value || '').toLowerCase();
+      document.querySelectorAll('.repo-checkbox-row').forEach(row => {
+        row.style.display = row.dataset.repo.includes(query) ? '' : 'none';
       });
-
-      // 削除ボタン
-      const delBtn = document.createElement('button');
-      delBtn.textContent = '✕';
-      delBtn.style.cssText = 'width:32px;height:32px;border:none;border-radius:6px;background:var(--danger);color:white;cursor:pointer;font-size:14px;flex-shrink:0;';
-      delBtn.onclick = () => row.remove();
-
-      row.appendChild(repoInput);
-      row.appendChild(arrow);
-      row.appendChild(folderInput);
-      row.appendChild(delBtn);
-      container.appendChild(row);
     }
 
     // ============================================================
@@ -1824,25 +1779,22 @@
         return;
       }
 
-      // マッピング行を読み取る
-      const rows = document.querySelectorAll('#repo-mapping-list > div');
-      const mappings = {};
-      let validCount = 0;
-      rows.forEach(row => {
-        const folder = row.querySelector('.mapping-folder').value.trim();
-        const repo = row.querySelector('.mapping-repo').value.trim();
-        if (folder && repo) {
-          mappings[folder] = repo;
-          validCount++;
-        }
-      });
-
-      if (validCount === 0) {
-        showToast('少なくとも1つのマッピングを設定してください', 'error');
+      // チェックされたリポジトリを取得
+      const checkboxes = document.querySelectorAll('#repo-checkbox-list input[type="checkbox"]:checked');
+      if (checkboxes.length === 0) {
+        showToast('少なくとも1つのリポジトリを選択してください', 'error');
         return;
       }
 
-      // 各リポジトリに接続テスト（Private 確認）
+      // 自動マッピング: repo名 → Drive フォルダ名（repo名をそのまま使用）
+      const mappings = {};
+      for (const cb of checkboxes) {
+        const repoFullName = cb.value;  // "owner/repo"
+        const folderName = repoFullName.split('/').pop();  // "repo"
+        mappings[folderName] = repoFullName;
+      }
+
+      // 各リポジトリに接続テスト
       for (const [folder, repo] of Object.entries(mappings)) {
         try {
           const res = await fetch(
@@ -1860,7 +1812,7 @@
       state.githubBranch = branch;
       updateGithubStatus(true);
       saveSettings();
-      showToast(validCount + ' 件のマッピングを保存しました', 'success');
+      showToast(checkboxes.length + ' 件のリポジトリを接続しました', 'success');
     }
 
     function updateGithubStatus(connected) {
@@ -3638,7 +3590,7 @@
       document.querySelectorAll('.settings-section input').forEach(i => i.value = '');
       document.getElementById('gdrive-client-id').value = '975677173358-i3rdoqc0je229uobr9cqq1sb63ett2pp.apps.googleusercontent.com';
       document.getElementById('github-branch').value = 'main';
-      document.getElementById('repo-mapping-list').innerHTML = '';
+      document.getElementById('repo-checkbox-list').innerHTML = '';
       document.getElementById('github-repo-section').style.display = 'none';
       updateGdriveStatus(false);
       updateGithubStatus(false);
