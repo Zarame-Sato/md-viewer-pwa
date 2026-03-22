@@ -1687,12 +1687,12 @@
       btn.textContent = '取得中...';
 
       try {
-        // Private リポジトリのみ取得（visibility=private）
+        // アクセス可能な全リポジトリを取得（private + public）
         let allRepos = [];
         let page = 1;
-        while (page <= 2) {
+        while (page <= 5) {
           const res = await fetch(
-            'https://api.github.com/user/repos?visibility=private&per_page=100&sort=updated&page=' + page,
+            'https://api.github.com/user/repos?per_page=100&sort=updated&page=' + page,
             { headers: { Authorization: 'token ' + token, Accept: 'application/vnd.github.v3+json' } }
           );
           if (!res.ok) throw new Error('認証失敗: Token が正しいか確認してください (' + res.status + ')');
@@ -1703,7 +1703,7 @@
         }
 
         if (allRepos.length === 0) {
-          showToast('Private リポジトリが見つかりません', 'warning');
+          showToast('リポジトリが見つかりません', 'warning');
           return;
         }
 
@@ -1716,7 +1716,7 @@
 
         // リポジトリ選択セクションを表示
         document.getElementById('github-repo-section').style.display = '';
-        showToast('Private リポジトリ ' + allRepos.length + ' 件を取得しました', 'success');
+        showToast('リポジトリ ' + allRepos.length + ' 件を取得しました', 'success');
       } catch (err) {
         showToast('リポジトリ取得エラー: ' + err.message, 'error');
       } finally {
@@ -1840,11 +1840,6 @@
             { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
           );
           if (!res.ok) throw new Error(repo + ' への接続失敗: ' + res.status);
-          const data = await res.json();
-          if (!data.private) {
-            showToast(repo + ' は Public です。Private リポジトリのみ使用できます', 'error');
-            return;
-          }
         } catch (err) {
           showToast('接続エラー: ' + err.message, 'error');
           return;
