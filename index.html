@@ -1228,15 +1228,90 @@
           updateGdriveStatus(true);
           loadGdriveFiles();
         } else {
-          // トークン期限切れ → クリアして再接続を促す
-          state.gdriveToken = null;
-          updateGdriveStatus(false);
-          showToast('Google Drive のセッションが切れました。設定から再接続してください', 'warning');
+          // トークン期限切れ → サイレント再取得を試みる
+          const refreshed = await silentRefreshDriveToken();
+          if (refreshed) {
+            updateGdriveStatus(true);
+            loadGdriveFiles();
+          } else {
+            state.gdriveToken = null;
+            updateGdriveStatus(false);
+            showToast('Google Drive のセッションが切れました。設定から再接続してください', 'warning');
+          }
         }
       } catch (e) {
         state.gdriveToken = null;
         updateGdriveStatus(false);
       }
+    }
+
+    // ============================================================
+    // Google Drive トークンのサイレント再取得
+    // hidden iframe + prompt=none で、ユーザー操作なしにトークンを更新する
+    // Googleにログイン済みなら自動成功、未ログインなら失敗→手動接続へ
+    // ============================================================
+    function silentRefreshDriveToken() {
+      return new Promise((resolve) => {
+        const clientId = state.gdriveClientId || document.getElementById('gdrive-client-id').value.trim();
+        if (!clientId) { resolve(false); return; }
+
+        let redirectUri = window.location.origin + window.location.pathname;
+        if (redirectUri.endsWith('/index.html')) redirectUri = redirectUri.replace('/index.html', '/');
+        if (!redirectUri.endsWith('/')) redirectUri += '/';
+
+        const scope = 'https://www.googleapis.com/auth/drive';
+        const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' +
+          'client_id=' + encodeURIComponent(clientId) +
+          '&redirect_uri=' + encodeURIComponent(redirectUri) +
+          '&response_type=token' +
+          '&scope=' + encodeURIComponent(scope) +
+          '&prompt=none';  // ← ユーザー操作なしで試行
+
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+
+        // タイムアウト（5秒で諦める）
+        const timer = setTimeout(() => {
+          cleanup();
+          resolve(false);
+        }, 5000);
+
+        function cleanup() {
+          clearTimeout(timer);
+          window.removeEventListener('message', onMessage);
+          if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+        }
+
+        // iframe のリダイレクト先からトークンを取得
+        function onMessage() {} // placeholder
+
+        iframe.addEventListener('load', () => {
+          try {
+            const hash = iframe.contentWindow.location.hash;
+            if (hash && hash.includes('access_token=')) {
+              const params = new URLSearchParams(hash.substring(1));
+              const token = params.get('access_token');
+              if (token) {
+                state.gdriveToken = token;
+                if (gapiReady && gapi.client) gapi.client.setToken({ access_token: token });
+                saveSettings();
+                cleanup();
+                resolve(true);
+                return;
+              }
+            }
+            cleanup();
+            resolve(false);
+          } catch (e) {
+            // cross-origin エラー（Googleのエラーページ等） = 失敗
+            cleanup();
+            resolve(false);
+          }
+        });
+
+        document.body.appendChild(iframe);
+        iframe.src = authUrl;
+      });
     }
 
     // ============================================================
@@ -1412,6 +1487,7 @@
     async function driveListAll(query, fields) {
       const allFiles = [];
       let pageToken = null;
+      let retried = false;
       do {
         let url = 'https://www.googleapis.com/drive/v3/files?' +
           'q=' + encodeURIComponent(query) +
@@ -1421,6 +1497,18 @@
         const res = await fetch(url, {
           headers: { Authorization: 'Bearer ' + state.gdriveToken }
         });
+        // 401（トークン切れ）→ サイレント再取得して1回だけリトライ
+        if (res.status === 401 && !retried) {
+          retried = true;
+          const refreshed = await silentRefreshDriveToken();
+          if (refreshed) {
+            pageToken = null;     // 最初からやり直し
+            allFiles.length = 0;
+            continue;
+          }
+          updateGdriveStatus(false);
+          throw new Error('セッションが切れました。設定から再接続してください');
+        }
         if (!res.ok) throw new Error('Drive API エラー: ' + res.status);
         const data = await res.json();
         allFiles.push(...(data.files || []));
