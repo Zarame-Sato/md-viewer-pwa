@@ -271,6 +271,7 @@
     .file-icon.txt-icon { background: linear-gradient(135deg, #94a3b8, #64748b); }
     .file-icon.py-icon { background: linear-gradient(135deg, #fbbf24, #f59e0b); }
     .file-icon.ipynb-icon { background: linear-gradient(135deg, #f97316, #ea580c); }
+    .file-icon.img-icon { background: linear-gradient(135deg, #a78bfa, #7c3aed); }
     .file-icon.default-icon { background: linear-gradient(135deg, #6c8aff, #8b5cf6); }
     .file-info { flex: 1; min-width: 0; }
     .file-name {
@@ -1604,9 +1605,9 @@
           "mimeType='application/vnd.google-apps.folder' and trashed=false",
           'id,name,parents'
         ),
-        // ② Drive 内の対応ファイル (md/pdf/csv/txt/py/ipynb)
+        // ② Drive 内の対応ファイル (md/pdf/csv/txt/py/ipynb/画像)
         driveListAll(
-          "(fileExtension='md' or mimeType='text/markdown' or fileExtension='pdf' or mimeType='application/pdf' or fileExtension='csv' or mimeType='text/csv' or fileExtension='txt' or mimeType='text/plain' or fileExtension='py' or mimeType='text/x-python' or fileExtension='ipynb') and trashed=false",
+          "(fileExtension='md' or mimeType='text/markdown' or fileExtension='pdf' or mimeType='application/pdf' or fileExtension='csv' or mimeType='text/csv' or fileExtension='txt' or mimeType='text/plain' or fileExtension='py' or mimeType='text/x-python' or fileExtension='ipynb' or fileExtension='png' or fileExtension='jpg' or fileExtension='jpeg' or fileExtension='gif' or fileExtension='svg' or fileExtension='webp' or fileExtension='bmp' or fileExtension='ico') and trashed=false",
           'id,name,mimeType,modifiedTime,size,parents'
         )
       ]);
@@ -2861,7 +2862,7 @@
             ? '設定画面から GitHub → Google Drive の順に接続してください'
             : Object.keys(state.repoMappings).length === 0
               ? '先に設定画面で GitHub リポジトリのマッピングを設定してください'
-              : '.md / .csv ファイルが見つかりません') +
+              : '対応ファイルが見つかりません') +
           '</p></div>';
         return;
       }
@@ -2970,7 +2971,7 @@
         tab.content = document.getElementById('editor-content').value;
       }
       // 表示中のHTMLも保存（切り替え時の再レンダリングを回避）
-      if (getFileType(tab.file.name) !== 'pdf') {
+      if (getFileType(tab.file.name) !== 'pdf' && getFileType(tab.file.name) !== 'image') {
         tab.renderedHtml = document.getElementById('viewer-content').innerHTML;
       }
     }
@@ -2999,6 +3000,18 @@
           renderPdf(tab.pdfData);
         } else {
           viewer.innerHTML = '<div class="loading"><div class="spinner"></div>読み込み中...</div>';
+        }
+      } else if (ft === 'image') {
+        // 画像 — URLから再表示
+        document.getElementById('btn-edit').style.display = 'none';
+        document.getElementById('btn-save-drive').style.display = 'none';
+        editTabs.style.display = 'none';
+        editor.style.display = 'none';
+        viewer.style.display = 'block';
+        if (tab.imageUrl) {
+          renderImage(tab.imageUrl, state.gdriveToken, tab.file.name);
+        } else {
+          viewer.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>画像を再読み込みできません</p></div>';
         }
       } else {
         // テキスト系ファイル (md/csv/txt/py/ipynb)
@@ -3128,6 +3141,16 @@
           return;
         }
 
+        // 画像ファイル
+        if (getFileType(file.name) === 'image') {
+          document.getElementById('btn-edit').style.display = 'none';
+          document.getElementById('btn-save-drive').style.display = 'none';
+          const imageUrl = 'https://www.googleapis.com/drive/v3/files/' + file.id + '?alt=media';
+          renderImage(imageUrl, state.gdriveToken, file.name);
+          newTab.imageUrl = imageUrl;
+          return;
+        }
+
         // テキスト系ファイル（md / csv / txt / py / ipynb）
         var ft = getFileType(file.name);
         var editLabel = ft === 'csv' ? 'ソース' : '編集';
@@ -3187,6 +3210,47 @@
         }
       } catch (err) {
         viewer.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>PDF 表示エラー: ' + escapeHtml(err.message) + '</p></div>';
+      }
+    }
+
+    // ============================================================
+    // 画像表示
+    // ============================================================
+    function renderImage(url, token, fileName) {
+      const viewer = document.getElementById('viewer-content');
+      viewer.innerHTML = '<div class="loading"><div class="spinner"></div>画像を読み込み中...</div>';
+      const img = new Image();
+      img.onload = function() {
+        viewer.innerHTML = '';
+        var container = document.createElement('div');
+        container.style.cssText = 'padding:16px;text-align:center;';
+        img.style.cssText = 'max-width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);';
+        img.alt = fileName || '';
+        container.appendChild(img);
+        viewer.appendChild(container);
+      };
+      img.onerror = function() {
+        viewer.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>画像の読み込みに失敗しました</p></div>';
+      };
+      // SVG は直接URL指定、それ以外は認証付きfetchしてblob URLに変換
+      if (fileName && fileName.toLowerCase().endsWith('.svg')) {
+        fetch(url, { headers: { Authorization: 'Bearer ' + token } })
+          .then(function(r) { return r.text(); })
+          .then(function(svgText) {
+            viewer.innerHTML = '<div style="padding:16px;text-align:center;">' + svgText + '</div>';
+            var svg = viewer.querySelector('svg');
+            if (svg) { svg.style.maxWidth = '100%'; svg.style.height = 'auto'; }
+          })
+          .catch(function() {
+            viewer.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>SVG の読み込みに失敗しました</p></div>';
+          });
+      } else {
+        fetch(url, { headers: { Authorization: 'Bearer ' + token } })
+          .then(function(r) { return r.blob(); })
+          .then(function(blob) { img.src = URL.createObjectURL(blob); })
+          .catch(function() {
+            viewer.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><p>画像の読み込みに失敗しました</p></div>';
+          });
       }
     }
 
@@ -3955,6 +4019,7 @@
       if (n.endsWith('.txt')) return 'txt';
       if (n.endsWith('.py')) return 'py';
       if (n.endsWith('.ipynb')) return 'ipynb';
+      if (/\.(png|jpe?g|gif|svg|webp|bmp|ico)$/.test(n)) return 'image';
       return 'md';
     }
     // ファイルタイプ → アイコンCSS / ラベル / MIMEタイプ
@@ -3966,13 +4031,14 @@
         csv: { cls: 'csv-icon', label: 'CSV' },
         txt: { cls: 'txt-icon', label: 'TXT' },
         py: { cls: 'py-icon', label: 'PY' },
-        ipynb: { cls: 'ipynb-icon', label: 'NB' }
+        ipynb: { cls: 'ipynb-icon', label: 'NB' },
+        image: { cls: 'img-icon', label: 'IMG' }
       };
       return map[t] || map.md;
     }
     function getFileMime(name) {
       var t = getFileType(name);
-      var map = { md: 'text/markdown', csv: 'text/csv', txt: 'text/plain', py: 'text/x-python', ipynb: 'application/json' };
+      var map = { md: 'text/markdown', csv: 'text/csv', txt: 'text/plain', py: 'text/x-python', ipynb: 'application/json', image: 'image/*' };
       return map[t] || 'text/plain';
     }
 
