@@ -1203,6 +1203,10 @@
         document.getElementById('github-save-token').checked = true;
         state.githubToken = savedSettings.githubToken;
       }
+      // トークンとマッピングが揃っていれば接続済み表示にする
+      if (state.githubToken && savedSettings.repoMappings && Object.keys(savedSettings.repoMappings).length > 0) {
+        updateGithubStatus(true);
+      }
       if (savedSettings.gdriveToken) {
         document.getElementById('github-save-token').checked = true;
         // リダイレクト戻り（URLにトークンあり）の場合は古い保存トークンを使わない
@@ -3814,11 +3818,13 @@
             saveFileCache(files);
           }
           renderFileList();
+          showToast('ファイル一覧を更新しました', 'success');
         }).catch(err => {
           showToast('更新失敗: ' + err.message, 'error');
           renderFileList();
         });
       } else {
+        showToast('Google Drive に接続してからファイルを更新してください', 'warning');
         renderFileList();
       }
     }
