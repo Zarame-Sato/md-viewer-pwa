@@ -2657,7 +2657,31 @@
             btn.textContent = 'Pull中... (' + (updated + created + skipped) + '/' + targetFiles.length + ')';
 
             const drivePath = (folder + '/' + ghFile.path).normalize('NFC');
-            const driveFile = state.files.find(f => (f.drivePath || '').normalize('NFC') === drivePath);
+            let driveFile = state.files.find(f => (f.drivePath || '').normalize('NFC') === drivePath);
+
+            // state.files で見つからない場合、Drive を直接検索して重複作成を防止
+            if (!driveFile) {
+              const pathSegments = ghFile.path.split('/');
+              const searchName = pathSegments[pathSegments.length - 1];
+              let searchParentId = topFolderId;
+              if (pathSegments.length > 1) {
+                searchParentId = await ensureDriveFolderPath(pathSegments.slice(0, -1), topFolderId, folderMap, createdFolderCache);
+              }
+              try {
+                const searchRes = await fetch(
+                  'https://www.googleapis.com/drive/v3/files?q=' +
+                  encodeURIComponent("name='" + searchName.replace(/'/g, "\\'") + "' and '" + searchParentId + "' in parents and trashed=false") +
+                  '&fields=files(id,name)',
+                  { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+                );
+                if (searchRes.ok) {
+                  const searchData = await searchRes.json();
+                  if (searchData.files && searchData.files.length > 0) {
+                    driveFile = { id: searchData.files[0].id, name: searchName, drivePath: drivePath };
+                  }
+                }
+              } catch (e) { /* 検索失敗時は新規作成にフォールバック */ }
+            }
 
             if (driveFile) {
               // 既存ファイル: タイムスタンプ比較
