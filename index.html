@@ -1054,26 +1054,22 @@
             <button type="submit" class="btn btn-primary" id="btn-fetch-repos">リポジトリ一覧を取得</button>
           </form>
 
-          <!-- PAT 入力後に表示されるリポジトリ選択エリア -->
+          <!-- PAT 入力後に表示されるマッピング設定エリア -->
           <div id="github-repo-section" style="display:none;">
             <label>ブランチ（全リポジトリ共通）</label>
             <input type="text" id="github-branch" placeholder="main" value="main">
 
-            <label style="margin-top:12px;">同期するリポジトリを追加</label>
+            <label style="margin-top:12px;">GitHub リポジトリ → Drive フォルダ マッピング</label>
             <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
-              プルダウンから選んで「追加」を押してください。Driveの同名フォルダと自動連携します。
+              リポジトリを選ぶと Drive フォルダ名が自動で入ります。<br>
+              必要に応じてフォルダ名を修正してください。
             </p>
-            <div style="display:flex;gap:8px;margin-bottom:12px;">
-              <select id="repo-select" style="flex:1;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;">
-                <option value="">-- リポジトリを選択 --</option>
-              </select>
-              <button type="button" class="btn btn-primary" onclick="addRepoToList()" style="flex-shrink:0;">追加</button>
+            <div id="repo-mapping-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
+
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-secondary" onclick="addMappingRow()">＋ マッピング追加</button>
+              <button class="btn btn-primary" onclick="connectGitHub()">接続する</button>
             </div>
-
-            <!-- 追加済みリポジトリ一覧（マッピング編集可） -->
-            <div id="repo-mapping-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;"></div>
-
-            <button class="btn btn-primary" onclick="connectGitHub()">接続する</button>
           </div>
         </div>
 
@@ -1104,10 +1100,12 @@
             トークンは Chrome のパスワード保存機能で管理できます。
           </p>
           <button class="btn btn-danger" onclick="clearAllSettings()">設定をクリア</button>
-          <button class="btn btn-info" onclick="pullAllFromGitHub()" style="margin-left:8px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
-            全リポジトリ Pull
-          </button>
+
+          <!-- リポジトリごとのPullボタン -->
+          <div id="per-repo-pull-section" style="margin-top:16px;">
+            <label>リポジトリ別 Pull（Driveが古いファイルのみ更新）</label>
+            <div id="per-repo-pull-list" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;"></div>
+          </div>
         </div>
       </div>
     </main>
@@ -1212,6 +1210,8 @@
           verifyAndLoadDrive();
         }
       }
+      // リポジトリ別Pullボタンを復元
+      renderPerRepoPullButtons();
     })();
 
     // Drive トークンの有効性を確認 → 有効なら接続済み＋ファイル取得
@@ -1730,83 +1730,78 @@
     }
 
     // ============================================================
-    // リポジトリ選択UI: プルダウン＋追加ボタン方式
+    // マッピングUI: Drive フォルダ名 ↔ GitHub リポジトリの対応表を構築
     // ============================================================
-    function buildRepoCheckboxUI() {
-      const select = document.getElementById('repo-select');
-      select.innerHTML = '<option value="">-- リポジトリを選択 --</option>';
+    function buildMappingUI() {
+      const container = document.getElementById('repo-mapping-list');
+      container.innerHTML = '';
 
-      (state.githubRepos || []).forEach(repoFullName => {
-        const option = document.createElement('option');
-        option.value = repoFullName;
-        option.textContent = repoFullName;
-        select.appendChild(option);
-      });
+      const existingMappings = state.repoMappings || {};
+      const folderNames = Object.keys(existingMappings);
 
-      // 既存マッピングを復元表示
-      renderMappingList();
-    }
-
-    // プルダウンから選んでリストに追加
-    function addRepoToList() {
-      const select = document.getElementById('repo-select');
-      const repoFullName = select.value;
-      if (!repoFullName) return;
-
-      // 既に追加済みなら無視
-      if (document.querySelector('.mapping-folder-input[data-repo="' + repoFullName + '"]')) {
-        showToast('既に追加済みです', 'error');
-        return;
+      if (folderNames.length > 0) {
+        folderNames.forEach(folder => {
+          addMappingRow(folder, existingMappings[folder]);
+        });
+      } else {
+        addMappingRow('', '');
       }
-
-      const repoName = repoFullName.split('/').pop();
-      // 既存マッピングの逆引き
-      const existingReverse = {};
-      for (const [folder, repo] of Object.entries(state.repoMappings || {})) {
-        existingReverse[repo] = folder;
-      }
-      const folderName = existingReverse[repoFullName] || repoName;
-
-      appendMappingRow(repoFullName, folderName);
-      select.value = '';
     }
+    // 後方互換: fetchGithubRepos() から呼ばれる旧名
+    function buildRepoCheckboxUI() { buildMappingUI(); }
 
-    // マッピング行を1つ追加
-    function appendMappingRow(repoFullName, folderName) {
-      const list = document.getElementById('repo-mapping-list');
+    // マッピング行を1つ追加する
+    function addMappingRow(folderName, repoFullName) {
+      folderName = folderName || '';
+      repoFullName = repoFullName || '';
+      const container = document.getElementById('repo-mapping-list');
 
       const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:14px;';
+      row.style.cssText = 'display:flex;gap:8px;align-items:center;';
 
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.value = folderName;
-      input.dataset.repo = repoFullName;
-      input.className = 'mapping-folder-input';
-      input.style.cssText = 'flex:1;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;';
+      // リポジトリ選択ドロップダウン
+      const repoSelect = document.createElement('select');
+      repoSelect.style.cssText = 'flex:1.5;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin:0;min-width:0;';
+      repoSelect.className = 'mapping-repo';
+      repoSelect.innerHTML = '<option value="">-- 選択 --</option>';
+      (state.githubRepos || []).forEach(r => {
+        const opt = document.createElement('option');
+        opt.value = r;
+        opt.textContent = r;
+        if (r === repoFullName) opt.selected = true;
+        repoSelect.appendChild(opt);
+      });
+      repoSelect.addEventListener('change', () => {
+        const selected = repoSelect.value;
+        if (selected && !folderInput.value) {
+          folderInput.value = selected.split('/')[1] || '';
+        }
+      });
 
-      const label = document.createElement('span');
-      label.style.cssText = 'color:var(--text-muted);font-size:12px;flex-shrink:0;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-      label.textContent = '→ ' + repoFullName;
+      // → ラベル
+      const arrow = document.createElement('span');
+      arrow.textContent = '→';
+      arrow.style.cssText = 'color:var(--text-muted);font-size:16px;flex-shrink:0;';
 
-      const removeBtn = document.createElement('button');
-      removeBtn.textContent = '×';
-      removeBtn.style.cssText = 'background:none;border:none;color:var(--text-muted);font-size:18px;cursor:pointer;padding:0 4px;flex-shrink:0;';
-      removeBtn.onclick = () => row.remove();
+      // Drive フォルダ名入力
+      const folderInput = document.createElement('input');
+      folderInput.type = 'text';
+      folderInput.placeholder = 'Drive フォルダ名';
+      folderInput.value = folderName;
+      folderInput.style.cssText = 'flex:1;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin:0;min-width:0;';
+      folderInput.className = 'mapping-folder';
 
-      row.appendChild(input);
-      row.appendChild(label);
-      row.appendChild(removeBtn);
-      list.appendChild(row);
-    }
+      // 削除ボタン
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '✕';
+      delBtn.style.cssText = 'width:32px;height:32px;border:none;border-radius:6px;background:var(--danger);color:white;cursor:pointer;font-size:14px;flex-shrink:0;';
+      delBtn.onclick = () => row.remove();
 
-    // 既存マッピングをリストに復元
-    function renderMappingList() {
-      const list = document.getElementById('repo-mapping-list');
-      list.innerHTML = '';
-      for (const [folder, repo] of Object.entries(state.repoMappings || {})) {
-        appendMappingRow(repo, folder);
-      }
+      row.appendChild(repoSelect);
+      row.appendChild(arrow);
+      row.appendChild(folderInput);
+      row.appendChild(delBtn);
+      container.appendChild(row);
     }
 
     // ============================================================
@@ -1820,18 +1815,22 @@
         return;
       }
 
-      // 追加済みリポジトリをマッピングリストから取得
-      const folderInputs = document.querySelectorAll('.mapping-folder-input');
-      if (folderInputs.length === 0) {
-        showToast('少なくとも1つのリポジトリを追加してください', 'error');
-        return;
-      }
-
+      // マッピング行を読み取る
+      const rows = document.querySelectorAll('#repo-mapping-list > div');
       const mappings = {};
-      for (const input of folderInputs) {
-        const repoFullName = input.dataset.repo;
-        const folderName = input.value.trim() || repoFullName.split('/').pop();
-        mappings[folderName] = repoFullName;
+      let validCount = 0;
+      rows.forEach(row => {
+        const folder = row.querySelector('.mapping-folder').value.trim();
+        const repo = row.querySelector('.mapping-repo').value;
+        if (folder && repo) {
+          mappings[folder] = repo;
+          validCount++;
+        }
+      });
+
+      if (validCount === 0) {
+        showToast('少なくとも1つのマッピングを設定してください', 'error');
+        return;
       }
 
       // 各リポジトリに接続テスト
@@ -1852,7 +1851,40 @@
       state.githubBranch = branch;
       updateGithubStatus(true);
       saveSettings();
-      showToast(folderInputs.length + ' 件のリポジトリを接続しました', 'success');
+      renderPerRepoPullButtons();
+      showToast(validCount + ' 件のマッピングを保存しました', 'success');
+    }
+
+    // ============================================================
+    // リポジトリ別Pullボタンを描画
+    // ============================================================
+    function renderPerRepoPullButtons() {
+      const list = document.getElementById('per-repo-pull-list');
+      if (!list) return;
+      list.innerHTML = '';
+      const mappings = state.repoMappings || {};
+      if (Object.keys(mappings).length === 0) {
+        list.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">マッピングが未設定です</p>';
+        return;
+      }
+      for (const [folder, repo] of Object.entries(mappings)) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;';
+
+        const label = document.createElement('span');
+        label.style.cssText = 'flex:1;font-size:14px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        label.textContent = repo + ' → ' + folder;
+
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-info';
+        btn.style.cssText = 'font-size:12px;flex-shrink:0;padding:6px 12px;';
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg> Pull';
+        btn.onclick = () => pullSingleRepo(folder, repo, btn);
+
+        row.appendChild(label);
+        row.appendChild(btn);
+        list.appendChild(row);
+      }
     }
 
     function updateGithubStatus(connected) {
@@ -2473,6 +2505,180 @@
       if (errors > 0) msg += ' / ' + errors + '件エラー';
       showToast(msg, (updated > 0 || created > 0) ? 'success' : 'info');
       // ファイル一覧を再取得
+      if (updated > 0 || created > 0) refreshFiles();
+    }
+
+    // ============================================================
+    // リポジトリ単位 Pull（Driveが古い場合のみ更新）
+    // ============================================================
+    async function pullSingleRepo(folder, repo, btn) {
+      if (!state.githubToken) { showToast('GitHub が未接続です', 'error'); return; }
+      if (!state.gdriveToken) { showToast('Google Drive に再接続してください', 'error'); return; }
+
+      const origText = btn.innerHTML;
+      btn.disabled = true;
+      btn.textContent = 'Pull中...';
+
+      let updated = 0, created = 0, skipped = 0, errors = 0;
+
+      try {
+        // Drive 全フォルダ一覧
+        let folderMap = new Map();
+        const allFolders = await driveListAll(
+          "mimeType='application/vnd.google-apps.folder' and trashed=false", 'id,name,parents'
+        );
+        for (const f of allFolders) {
+          folderMap.set(f.id, { name: f.name, parentId: (f.parents && f.parents[0]) || null });
+        }
+
+        const rootId = state.gdriveFolderId || null;
+
+        // マッピング先フォルダIDを特定（なければ作成）
+        let topFolderId = null;
+        for (const [fId, fData] of folderMap) {
+          if (fData.name === folder && (!rootId || fData.parentId === rootId)) {
+            topFolderId = fId;
+            break;
+          }
+        }
+        if (!topFolderId) {
+          const topFolder = await createDriveFolder(folder, rootId);
+          folderMap.set(topFolder.id, { name: folder, parentId: rootId });
+          topFolderId = topFolder.id;
+        }
+
+        // GitHub ファイルツリー取得
+        const treeRes = await fetch(
+          'https://api.github.com/repos/' + repo + '/git/trees/' + state.githubBranch + '?recursive=1',
+          { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+        );
+        if (!treeRes.ok) throw new Error('ツリー取得失敗: ' + treeRes.status);
+        const treeData = await treeRes.json();
+
+        const targetFiles = (treeData.tree || []).filter(f =>
+          f.type === 'blob' && (f.path.endsWith('.md') || f.path.endsWith('.csv') || f.path.endsWith('.txt') || f.path.endsWith('.py') || f.path.endsWith('.ipynb'))
+        );
+
+        const createdFolderCache = new Map();
+
+        for (const ghFile of targetFiles) {
+          try {
+            btn.textContent = 'Pull中... (' + (updated + created + skipped) + '/' + targetFiles.length + ')';
+
+            const drivePath = (folder + '/' + ghFile.path).normalize('NFC');
+            const driveFile = state.files.find(f => (f.drivePath || '').normalize('NFC') === drivePath);
+
+            if (driveFile) {
+              // 既存ファイル: タイムスタンプ比較
+              let ghTime = null;
+              try {
+                const cRes = await fetch(
+                  'https://api.github.com/repos/' + repo + '/commits?path=' + encodeURIComponent(ghFile.path) + '&sha=' + state.githubBranch + '&per_page=1',
+                  { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+                );
+                if (cRes.ok) {
+                  const commits = await cRes.json();
+                  if (commits.length > 0) ghTime = new Date(commits[0].commit.committer.date);
+                }
+              } catch (e) {}
+
+              let driveTime = null;
+              try {
+                const mRes = await fetch(
+                  'https://www.googleapis.com/drive/v3/files/' + driveFile.id + '?fields=modifiedTime',
+                  { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+                );
+                if (mRes.ok) {
+                  const meta = await mRes.json();
+                  driveTime = new Date(meta.modifiedTime);
+                }
+              } catch (e) {}
+
+              // Drive が新しければスキップ
+              if (ghTime && driveTime && driveTime >= ghTime) {
+                skipped++;
+                continue;
+              }
+
+              // GitHub から取得して Drive に上書き
+              const contentRes = await fetch(
+                'https://api.github.com/repos/' + repo + '/contents/' + encodeURIComponent(ghFile.path).replace(/%2F/g, '/') + '?ref=' + state.githubBranch,
+                { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+              );
+              if (!contentRes.ok) { errors++; continue; }
+              const contentData = await contentRes.json();
+              const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
+
+              const boundary = '----MDViewerBoundary' + Date.now();
+              const mimeType = getFileMime(ghFile.path);
+              const metadata = JSON.stringify({ mimeType: mimeType });
+              const body =
+                '--' + boundary + '\r\n' +
+                'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+                metadata + '\r\n' +
+                '--' + boundary + '\r\n' +
+                'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
+                content + '\r\n' +
+                '--' + boundary + '--';
+
+              const upRes = await fetch(
+                'https://www.googleapis.com/upload/drive/v3/files/' + driveFile.id + '?uploadType=multipart',
+                { method: 'PATCH', headers: { 'Authorization': 'Bearer ' + state.gdriveToken, 'Content-Type': 'multipart/related; boundary=' + boundary }, body: body }
+              );
+              if (upRes.ok) updated++; else errors++;
+
+            } else {
+              // 新規ファイル
+              const pathSegments = ghFile.path.split('/');
+              const fileName = pathSegments.pop();
+              let parentFolderId = topFolderId;
+              if (pathSegments.length > 0) {
+                parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
+              }
+
+              const contentRes = await fetch(
+                'https://api.github.com/repos/' + repo + '/contents/' + encodeURIComponent(ghFile.path).replace(/%2F/g, '/') + '?ref=' + state.githubBranch,
+                { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+              );
+              if (!contentRes.ok) { errors++; continue; }
+              const contentData = await contentRes.json();
+              const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
+
+              const boundary = '----MDViewerBoundary' + Date.now();
+              const mimeType = getFileMime(fileName);
+              const metadata = JSON.stringify({ name: fileName, mimeType: mimeType, parents: [parentFolderId] });
+              const body =
+                '--' + boundary + '\r\n' +
+                'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+                metadata + '\r\n' +
+                '--' + boundary + '\r\n' +
+                'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
+                content + '\r\n' +
+                '--' + boundary + '--';
+
+              const upRes = await fetch(
+                'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+                { method: 'POST', headers: { 'Authorization': 'Bearer ' + state.gdriveToken, 'Content-Type': 'multipart/related; boundary=' + boundary }, body: body }
+              );
+              if (upRes.ok) created++; else errors++;
+            }
+          } catch (e) { errors++; }
+        }
+      } catch (e) {
+        showToast('Pull エラー: ' + e.message, 'error');
+        btn.innerHTML = origText;
+        btn.disabled = false;
+        return;
+      }
+
+      btn.innerHTML = origText;
+      btn.disabled = false;
+
+      var msg = repo + ' Pull完了: ';
+      if (created > 0) msg += created + '件新規 / ';
+      msg += updated + '件更新 / ' + skipped + '件スキップ';
+      if (errors > 0) msg += ' / ' + errors + '件エラー';
+      showToast(msg, (updated > 0 || created > 0) ? 'success' : 'info');
       if (updated > 0 || created > 0) refreshFiles();
     }
 
