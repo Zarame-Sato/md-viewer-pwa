@@ -1,5 +1,5 @@
 // Service Worker - オフラインでも閲覧可能にする
-const CACHE_NAME = 'folio-v17';
+const CACHE_NAME = 'folio-v18';
 const ASSETS_TO_CACHE = [
   './index.html',
   './manifest.json',

@@ -1061,10 +1061,16 @@
 
             <label style="margin-top:12px;">同期するリポジトリを選択</label>
             <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
-              チェックしたリポジトリが Drive の同名フォルダと自動で連携します。
+              リポジトリを選択すると Drive の同名フォルダと自動連携します。フォルダ名は後から変更できます。
             </p>
-            <input type="text" id="repo-search" placeholder="リポジトリを検索…" style="margin-bottom:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;width:100%;box-sizing:border-box;" oninput="filterRepoList()">
-            <div id="repo-checkbox-list" style="max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;margin-bottom:12px;border:1px solid var(--border);border-radius:8px;padding:8px;"></div>
+            <select id="repo-select" multiple size="8" style="width:100%;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin-bottom:12px;">
+            </select>
+
+            <!-- 自動マッピング結果の表示・編集エリア -->
+            <div id="repo-mapping-editor" style="display:none;margin-bottom:12px;">
+              <label>マッピング（Driveフォルダ名 → リポジトリ）</label>
+              <div id="repo-mapping-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+            </div>
 
             <button class="btn btn-primary" onclick="connectGitHub()">接続する</button>
           </div>
@@ -1723,48 +1729,69 @@
     }
 
     // ============================================================
-    // リポジトリ選択UI: チェックボックスリストを構築
+    // リポジトリ選択UI: プルダウン（select multiple）を構築
     // ============================================================
     function buildRepoCheckboxUI() {
-      const container = document.getElementById('repo-checkbox-list');
-      container.innerHTML = '';
+      const select = document.getElementById('repo-select');
+      select.innerHTML = '';
 
       // 既存マッピングからチェック済みリポジトリを特定
       const checkedRepos = new Set(Object.values(state.repoMappings || {}));
 
       (state.githubRepos || []).forEach(repoFullName => {
-        const repoName = repoFullName.split('/').pop();
-        const label = document.createElement('label');
-        label.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:14px;color:var(--text);';
-        label.className = 'repo-checkbox-row';
-        label.dataset.repo = repoFullName.toLowerCase();
-
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.value = repoFullName;
-        cb.style.cssText = 'width:18px;height:18px;flex-shrink:0;';
-        cb.checked = checkedRepos.has(repoFullName);
-
-        const nameSpan = document.createElement('span');
-        nameSpan.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-        nameSpan.textContent = repoFullName;
-
-        const folderHint = document.createElement('span');
-        folderHint.style.cssText = 'margin-left:auto;font-size:11px;color:var(--text-muted);flex-shrink:0;';
-        folderHint.textContent = '→ ' + repoName;
-
-        label.appendChild(cb);
-        label.appendChild(nameSpan);
-        label.appendChild(folderHint);
-        container.appendChild(label);
+        const option = document.createElement('option');
+        option.value = repoFullName;
+        option.textContent = repoFullName;
+        option.selected = checkedRepos.has(repoFullName);
+        select.appendChild(option);
       });
+
+      // 選択変更時にマッピングエディタを更新
+      select.onchange = updateMappingEditor;
+      updateMappingEditor();
     }
 
-    // リポジトリ検索フィルタ
-    function filterRepoList() {
-      const query = (document.getElementById('repo-search').value || '').toLowerCase();
-      document.querySelectorAll('.repo-checkbox-row').forEach(row => {
-        row.style.display = row.dataset.repo.includes(query) ? '' : 'none';
+    // 選択されたリポジトリのマッピングエディタを更新
+    function updateMappingEditor() {
+      const select = document.getElementById('repo-select');
+      const editor = document.getElementById('repo-mapping-editor');
+      const list = document.getElementById('repo-mapping-list');
+      const selected = Array.from(select.selectedOptions).map(o => o.value);
+
+      if (selected.length === 0) {
+        editor.style.display = 'none';
+        return;
+      }
+      editor.style.display = '';
+      list.innerHTML = '';
+
+      // 既存マッピングの逆引き（repo → folder）
+      const existingReverse = {};
+      for (const [folder, repo] of Object.entries(state.repoMappings || {})) {
+        existingReverse[repo] = folder;
+      }
+
+      selected.forEach(repoFullName => {
+        const repoName = repoFullName.split('/').pop();
+        const existingFolder = existingReverse[repoFullName] || repoName;
+
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:14px;';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = existingFolder;
+        input.dataset.repo = repoFullName;
+        input.className = 'mapping-folder-input';
+        input.style.cssText = 'flex:1;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;';
+
+        const label = document.createElement('span');
+        label.style.cssText = 'color:var(--text-muted);font-size:12px;flex-shrink:0;';
+        label.textContent = '→ ' + repoFullName;
+
+        row.appendChild(input);
+        row.appendChild(label);
+        list.appendChild(row);
       });
     }
 
@@ -1779,18 +1806,20 @@
         return;
       }
 
-      // チェックされたリポジトリを取得
-      const checkboxes = document.querySelectorAll('#repo-checkbox-list input[type="checkbox"]:checked');
-      if (checkboxes.length === 0) {
+      // 選択されたリポジトリを取得
+      const select = document.getElementById('repo-select');
+      const selected = Array.from(select.selectedOptions).map(o => o.value);
+      if (selected.length === 0) {
         showToast('少なくとも1つのリポジトリを選択してください', 'error');
         return;
       }
 
-      // 自動マッピング: repo名 → Drive フォルダ名（repo名をそのまま使用）
+      // マッピングエディタからフォルダ名を取得（手動変更を反映）
       const mappings = {};
-      for (const cb of checkboxes) {
-        const repoFullName = cb.value;  // "owner/repo"
-        const folderName = repoFullName.split('/').pop();  // "repo"
+      const folderInputs = document.querySelectorAll('.mapping-folder-input');
+      for (const input of folderInputs) {
+        const repoFullName = input.dataset.repo;
+        const folderName = input.value.trim() || repoFullName.split('/').pop();
         mappings[folderName] = repoFullName;
       }
 
@@ -1812,7 +1841,7 @@
       state.githubBranch = branch;
       updateGithubStatus(true);
       saveSettings();
-      showToast(checkboxes.length + ' 件のリポジトリを接続しました', 'success');
+      showToast(selected.length + ' 件のリポジトリを接続しました', 'success');
     }
 
     function updateGithubStatus(connected) {
