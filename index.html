@@ -1054,22 +1054,19 @@
             <button type="submit" class="btn btn-primary" id="btn-fetch-repos">リポジトリ一覧を取得</button>
           </form>
 
-          <!-- PAT 入力後に表示されるマッピング設定エリア -->
+          <!-- PAT 入力後に表示されるリポジトリ選択エリア -->
           <div id="github-repo-section" style="display:none;">
             <label>ブランチ（全リポジトリ共通）</label>
             <input type="text" id="github-branch" placeholder="main" value="main">
 
-            <label style="margin-top:12px;">GitHub リポジトリ → Drive フォルダ マッピング</label>
+            <label style="margin-top:12px;">同期するリポジトリを選択</label>
             <p style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">
-              リポジトリを選ぶと Drive フォルダ名が自動で入ります。<br>
-              必要に応じてフォルダ名を修正してください。
+              チェックしたリポジトリが Drive の同名フォルダと自動で連携します。
             </p>
-            <div id="repo-mapping-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
+            <input type="text" id="repo-search" placeholder="リポジトリを検索…" style="margin-bottom:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;width:100%;box-sizing:border-box;" oninput="filterRepoList()">
+            <div id="repo-checkbox-list" style="max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;margin-bottom:12px;border:1px solid var(--border);border-radius:8px;padding:8px;"></div>
 
-            <div style="display:flex;gap:8px;">
-              <button class="btn btn-secondary" onclick="addMappingRow()">＋ マッピング追加</button>
-              <button class="btn btn-primary" onclick="connectGitHub()">接続する</button>
-            </div>
+            <button class="btn btn-primary" onclick="connectGitHub()">接続する</button>
           </div>
         </div>
 
@@ -1647,9 +1644,16 @@
           path: '/drive/v3/files/' + fileId,
           params: { alt: 'media' }
         });
-        // gapi の response.body はバイナリ文字列（1char=1byte）
-        // UTF-8日本語を正しくデコードするために TextDecoder を使う
+        // gapi の response.body はバイナリ文字列（1char=1byte）の場合と、
+        // iOS Safari など一部環境では既にデコード済み Unicode 文字列の場合がある。
+        // charCode > 255 の文字があれば既にデコード済みなのでそのまま返す。
         var raw = response.body;
+        var alreadyDecoded = false;
+        for (var i = 0; i < raw.length; i++) {
+          if (raw.charCodeAt(i) > 255) { alreadyDecoded = true; break; }
+        }
+        if (alreadyDecoded) return raw;
+        // バイナリ文字列 → UTF-8 デコード
         var bytes = new Uint8Array(raw.length);
         for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) & 0xff;
         return new TextDecoder('utf-8').decode(bytes);
@@ -1660,7 +1664,9 @@
         { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
       );
       if (!res.ok) throw new Error('Drive ファイル読み込みエラー: ' + res.status);
-      return await res.text();
+      // ArrayBuffer + TextDecoder で確実に UTF-8 デコード
+      var buf = await res.arrayBuffer();
+      return new TextDecoder('utf-8').decode(buf);
     }
 
     // ============================================================
@@ -1678,12 +1684,12 @@
       btn.textContent = '取得中...';
 
       try {
-        // Private リポジトリのみ取得（visibility=private）
+        // アクセス可能な全リポジトリを取得（private + public）
         let allRepos = [];
         let page = 1;
-        while (page <= 2) {
+        while (page <= 5) {
           const res = await fetch(
-            'https://api.github.com/user/repos?visibility=private&per_page=100&sort=updated&page=' + page,
+            'https://api.github.com/user/repos?per_page=100&sort=updated&page=' + page,
             { headers: { Authorization: 'token ' + token, Accept: 'application/vnd.github.v3+json' } }
           );
           if (!res.ok) throw new Error('認証失敗: Token が正しいか確認してください (' + res.status + ')');
@@ -1694,7 +1700,7 @@
         }
 
         if (allRepos.length === 0) {
-          showToast('Private リポジトリが見つかりません', 'warning');
+          showToast('リポジトリが見つかりません', 'warning');
           return;
         }
 
@@ -1702,12 +1708,12 @@
         state.githubToken = token;
         state.githubRepos = allRepos.map(r => r.full_name);
 
-        // マッピングUIを構築
-        buildMappingUI();
+        // チェックボックスUIを構築
+        buildRepoCheckboxUI();
 
         // リポジトリ選択セクションを表示
         document.getElementById('github-repo-section').style.display = '';
-        showToast('Private リポジトリ ' + allRepos.length + ' 件を取得しました', 'success');
+        showToast('リポジトリ ' + allRepos.length + ' 件を取得しました', 'success');
       } catch (err) {
         showToast('リポジトリ取得エラー: ' + err.message, 'error');
       } finally {
@@ -1717,81 +1723,49 @@
     }
 
     // ============================================================
-    // マッピングUI: Drive フォルダ名 ↔ GitHub リポジトリの対応表を構築
+    // リポジトリ選択UI: チェックボックスリストを構築
     // ============================================================
-    function buildMappingUI() {
-      const container = document.getElementById('repo-mapping-list');
+    function buildRepoCheckboxUI() {
+      const container = document.getElementById('repo-checkbox-list');
       container.innerHTML = '';
 
-      // 既存のマッピングがあればそれを表示
-      const existingMappings = state.repoMappings || {};
-      const folderNames = Object.keys(existingMappings);
+      // 既存マッピングからチェック済みリポジトリを特定
+      const checkedRepos = new Set(Object.values(state.repoMappings || {}));
 
-      if (folderNames.length > 0) {
-        // 保存済みマッピングを復元
-        folderNames.forEach(folder => {
-          addMappingRow(folder, existingMappings[folder]);
-        });
-      } else {
-        // 初回: 空行を1つ（リポジトリを選べばフォルダ名が自動入力される）
-        addMappingRow('', '');
-      }
+      (state.githubRepos || []).forEach(repoFullName => {
+        const repoName = repoFullName.split('/').pop();
+        const label = document.createElement('label');
+        label.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:14px;color:var(--text);';
+        label.className = 'repo-checkbox-row';
+        label.dataset.repo = repoFullName.toLowerCase();
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = repoFullName;
+        cb.style.cssText = 'width:18px;height:18px;flex-shrink:0;';
+        cb.checked = checkedRepos.has(repoFullName);
+
+        const nameSpan = document.createElement('span');
+        nameSpan.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        nameSpan.textContent = repoFullName;
+
+        const folderHint = document.createElement('span');
+        folderHint.style.cssText = 'margin-left:auto;font-size:11px;color:var(--text-muted);flex-shrink:0;';
+        folderHint.textContent = '→ ' + repoName;
+
+        label.appendChild(cb);
+        label.appendChild(nameSpan);
+        label.appendChild(folderHint);
+        container.appendChild(label);
+      });
     }
 
-    // マッピング行を1つ追加する
-    function addMappingRow(folderName, repoFullName) {
-      folderName = folderName || '';
-      repoFullName = repoFullName || '';
-      const container = document.getElementById('repo-mapping-list');
-
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;gap:8px;align-items:center;';
-
-      // Drive フォルダ名入力
-      const folderInput = document.createElement('input');
-      folderInput.type = 'text';
-      folderInput.placeholder = 'Drive フォルダ名';
-      folderInput.value = folderName;
-      folderInput.style.cssText = 'flex:1;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin:0;min-width:0;';
-      folderInput.className = 'mapping-folder';
-
-      // → ラベル
-      const arrow = document.createElement('span');
-      arrow.textContent = '→';
-      arrow.style.cssText = 'color:var(--text-muted);font-size:16px;flex-shrink:0;';
-
-      // リポジトリ選択ドロップダウン
-      const repoSelect = document.createElement('select');
-      repoSelect.style.cssText = 'flex:1.5;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin:0;min-width:0;';
-      repoSelect.className = 'mapping-repo';
-      repoSelect.innerHTML = '<option value="">-- 選択 --</option>';
-      state.githubRepos.forEach(r => {
-        const opt = document.createElement('option');
-        opt.value = r;
-        opt.textContent = r;
-        if (r === repoFullName) opt.selected = true;
-        repoSelect.appendChild(opt);
+    // リポジトリ検索フィルタ
+    function filterRepoList() {
+      const query = (document.getElementById('repo-search').value || '').toLowerCase();
+      document.querySelectorAll('.repo-checkbox-row').forEach(row => {
+        row.style.display = row.dataset.repo.includes(query) ? '' : 'none';
       });
-      // リポジトリ選択時 → "owner/repo" の repo 部分を Drive フォルダ名に自動セット
-      repoSelect.addEventListener('change', () => {
-        const selected = repoSelect.value;
-        if (selected && !folderInput.value) {
-          // フォルダ名が空の場合のみ自動入力
-          folderInput.value = selected.split('/')[1] || '';
-        }
-      });
-
-      // 削除ボタン
-      const delBtn = document.createElement('button');
-      delBtn.textContent = '✕';
-      delBtn.style.cssText = 'width:32px;height:32px;border:none;border-radius:6px;background:var(--danger);color:white;cursor:pointer;font-size:14px;flex-shrink:0;';
-      delBtn.onclick = () => row.remove();
-
-      row.appendChild(repoSelect);
-      row.appendChild(arrow);
-      row.appendChild(folderInput);
-      row.appendChild(delBtn);
-      container.appendChild(row);
     }
 
     // ============================================================
@@ -1805,25 +1779,22 @@
         return;
       }
 
-      // マッピング行を読み取る
-      const rows = document.querySelectorAll('#repo-mapping-list > div');
-      const mappings = {};
-      let validCount = 0;
-      rows.forEach(row => {
-        const folder = row.querySelector('.mapping-folder').value.trim();
-        const repo = row.querySelector('.mapping-repo').value;
-        if (folder && repo) {
-          mappings[folder] = repo;
-          validCount++;
-        }
-      });
-
-      if (validCount === 0) {
-        showToast('少なくとも1つのマッピングを設定してください', 'error');
+      // チェックされたリポジトリを取得
+      const checkboxes = document.querySelectorAll('#repo-checkbox-list input[type="checkbox"]:checked');
+      if (checkboxes.length === 0) {
+        showToast('少なくとも1つのリポジトリを選択してください', 'error');
         return;
       }
 
-      // 各リポジトリに接続テスト（Private 確認）
+      // 自動マッピング: repo名 → Drive フォルダ名（repo名をそのまま使用）
+      const mappings = {};
+      for (const cb of checkboxes) {
+        const repoFullName = cb.value;  // "owner/repo"
+        const folderName = repoFullName.split('/').pop();  // "repo"
+        mappings[folderName] = repoFullName;
+      }
+
+      // 各リポジトリに接続テスト
       for (const [folder, repo] of Object.entries(mappings)) {
         try {
           const res = await fetch(
@@ -1831,11 +1802,6 @@
             { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
           );
           if (!res.ok) throw new Error(repo + ' への接続失敗: ' + res.status);
-          const data = await res.json();
-          if (!data.private) {
-            showToast(repo + ' は Public です。Private リポジトリのみ使用できます', 'error');
-            return;
-          }
         } catch (err) {
           showToast('接続エラー: ' + err.message, 'error');
           return;
@@ -1846,7 +1812,7 @@
       state.githubBranch = branch;
       updateGithubStatus(true);
       saveSettings();
-      showToast(validCount + ' 件のマッピングを保存しました', 'success');
+      showToast(checkboxes.length + ' 件のリポジトリを接続しました', 'success');
     }
 
     function updateGithubStatus(connected) {
@@ -2206,6 +2172,60 @@
     // GitHub から Pull（リポジトリ単位）
     // マッピングされた全リポジトリの全ファイルを比較して新しい方で同期
     // ============================================================
+    // Drive にフォルダを作成するヘルパー（親フォルダID指定）
+    async function createDriveFolder(name, parentId) {
+      const res = await fetch(
+        'https://www.googleapis.com/drive/v3/files',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + state.gdriveToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: name,
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: parentId ? [parentId] : []
+          })
+        }
+      );
+      if (!res.ok) throw new Error('フォルダ作成エラー: ' + res.status);
+      return await res.json();
+    }
+
+    // Drive にフォルダパスを再帰的に作成し、最終フォルダのIDを返す
+    // folderMap: Map<id, {name, parentId}> — 既存の Drive フォルダ一覧
+    // createdCache: Map<"parentId/name", id> — 今回作成済みのキャッシュ
+    async function ensureDriveFolderPath(pathParts, rootId, folderMap, createdCache) {
+      let currentParentId = rootId || null;
+      for (const part of pathParts) {
+        const cacheKey = (currentParentId || 'root') + '/' + part;
+        if (createdCache.has(cacheKey)) {
+          currentParentId = createdCache.get(cacheKey);
+          continue;
+        }
+        // 既存フォルダを探す
+        let found = null;
+        for (const [fId, fData] of folderMap) {
+          if (fData.name === part && fData.parentId === currentParentId) {
+            found = fId;
+            break;
+          }
+        }
+        if (found) {
+          currentParentId = found;
+          createdCache.set(cacheKey, found);
+        } else {
+          // 新規作成
+          const created = await createDriveFolder(part, currentParentId);
+          folderMap.set(created.id, { name: part, parentId: currentParentId });
+          createdCache.set(cacheKey, created.id);
+          currentParentId = created.id;
+        }
+      }
+      return currentParentId;
+    }
+
     async function pullAllFromGitHub() {
       if (!state.githubToken || Object.keys(state.repoMappings).length === 0) {
         showToast('GitHub が未接続です', 'error');
@@ -2216,17 +2236,56 @@
         return;
       }
 
-      if (!confirm('GitHub から全ファイルを Pull します。\nDrive より新しいファイルのみ上書きされます。\n\n続行しますか？')) {
+      if (!confirm('GitHub から全ファイルを Pull します。\n・Drive に無いファイルは新規作成されます\n・既存ファイルは GitHub が新しい場合のみ上書きします\n・Drive の方が新しいファイルはスキップします\n\n続行しますか？')) {
         return;
       }
 
       showToast('リポジトリ Pull を開始します...', 'info');
       let updated = 0;
+      let created = 0;
       let skipped = 0;
       let errors = 0;
 
+      // Drive の全フォルダ一覧を取得（フォルダ作成の重複チェック用）
+      let folderMap = new Map();
+      try {
+        const allFolders = await driveListAll(
+          "mimeType='application/vnd.google-apps.folder' and trashed=false",
+          'id,name,parents'
+        );
+        for (const f of allFolders) {
+          folderMap.set(f.id, { name: f.name, parentId: (f.parents && f.parents[0]) || null });
+        }
+      } catch (e) {
+        showToast('Drive フォルダ取得に失敗: ' + e.message, 'error');
+        return;
+      }
+
+      // マッピングのトップレベルフォルダIDを特定
+      const rootId = state.gdriveFolderId || null;
+      const mappingFolderIds = {};
+      for (const folderName of Object.keys(state.repoMappings)) {
+        for (const [fId, fData] of folderMap) {
+          if (fData.name === folderName && (!rootId || fData.parentId === rootId)) {
+            mappingFolderIds[folderName] = fId;
+            break;
+          }
+        }
+      }
+
+      // 今回の実行で作成したフォルダのキャッシュ
+      const createdFolderCache = new Map();
+
       for (const [folder, repo] of Object.entries(state.repoMappings)) {
         try {
+          // マッピング先のトップフォルダが無ければ作成
+          if (!mappingFolderIds[folder]) {
+            const topFolder = await createDriveFolder(folder, rootId);
+            folderMap.set(topFolder.id, { name: folder, parentId: rootId });
+            mappingFolderIds[folder] = topFolder.id;
+          }
+          const topFolderId = mappingFolderIds[folder];
+
           // リポジトリのファイルツリーを取得
           const treeRes = await fetch(
             'https://api.github.com/repos/' + repo + '/git/trees/' + state.githubBranch + '?recursive=1',
@@ -2235,7 +2294,7 @@
           if (!treeRes.ok) { errors++; continue; }
           const treeData = await treeRes.json();
 
-          // md, csv ファイルだけ対象
+          // 対象ファイル（md, csv, txt, py, ipynb）
           const targetFiles = (treeData.tree || []).filter(f =>
             f.type === 'blob' && (f.path.endsWith('.md') || f.path.endsWith('.csv') || f.path.endsWith('.txt') || f.path.endsWith('.py') || f.path.endsWith('.ipynb'))
           );
@@ -2245,83 +2304,136 @@
               // Drive側で対応ファイルを探す（NFC正規化して比較。macOS NFD ≠ GitHub NFC 対策）
               const drivePath = (folder + '/' + ghFile.path).normalize('NFC');
               const driveFile = state.files.find(f => (f.drivePath || '').normalize('NFC') === drivePath);
-              if (!driveFile) { skipped++; continue; }
 
-              // GitHub のコミット日時
-              let ghTime = null;
-              try {
-                const cRes = await fetch(
-                  'https://api.github.com/repos/' + repo + '/commits?path=' + encodeURIComponent(ghFile.path) + '&sha=' + state.githubBranch + '&per_page=1',
+              if (driveFile) {
+                // ── 既存ファイル: タイムスタンプ比較でコンフリクト回避 ──
+                let ghTime = null;
+                try {
+                  const cRes = await fetch(
+                    'https://api.github.com/repos/' + repo + '/commits?path=' + encodeURIComponent(ghFile.path) + '&sha=' + state.githubBranch + '&per_page=1',
+                    { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+                  );
+                  if (cRes.ok) {
+                    const commits = await cRes.json();
+                    if (commits.length > 0) ghTime = new Date(commits[0].commit.committer.date);
+                  }
+                } catch (e) {}
+
+                let driveTime = null;
+                try {
+                  const mRes = await fetch(
+                    'https://www.googleapis.com/drive/v3/files/' + driveFile.id + '?fields=modifiedTime',
+                    { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+                  );
+                  if (mRes.ok) {
+                    const meta = await mRes.json();
+                    driveTime = new Date(meta.modifiedTime);
+                  }
+                } catch (e) {}
+
+                // Drive の方が新しければスキップ（コンフリクト回避）
+                if (ghTime && driveTime && driveTime >= ghTime) {
+                  skipped++;
+                  continue;
+                }
+
+                // GitHub の内容を取得して Drive に上書き
+                const contentRes = await fetch(
+                  'https://api.github.com/repos/' + repo + '/contents/' + encodeURIComponent(ghFile.path).replace(/%2F/g, '/') + '?ref=' + state.githubBranch,
                   { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
                 );
-                if (cRes.ok) {
-                  const commits = await cRes.json();
-                  if (commits.length > 0) ghTime = new Date(commits[0].commit.committer.date);
-                }
-              } catch (e) {}
+                if (!contentRes.ok) { errors++; continue; }
+                const contentData = await contentRes.json();
+                const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
 
-              // Drive の更新日時
-              let driveTime = null;
-              try {
-                const mRes = await fetch(
-                  'https://www.googleapis.com/drive/v3/files/' + driveFile.id + '?fields=modifiedTime',
-                  { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+                const boundary = '----MDViewerBoundary' + Date.now();
+                const mimeType = getFileMime(ghFile.path);
+                const metadata = JSON.stringify({ mimeType: mimeType });
+                const body =
+                  '--' + boundary + '\r\n' +
+                  'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+                  metadata + '\r\n' +
+                  '--' + boundary + '\r\n' +
+                  'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
+                  content + '\r\n' +
+                  '--' + boundary + '--';
+
+                const upRes = await fetch(
+                  'https://www.googleapis.com/upload/drive/v3/files/' + driveFile.id + '?uploadType=multipart',
+                  {
+                    method: 'PATCH',
+                    headers: {
+                      'Authorization': 'Bearer ' + state.gdriveToken,
+                      'Content-Type': 'multipart/related; boundary=' + boundary
+                    },
+                    body: body
+                  }
                 );
-                if (mRes.ok) {
-                  const meta = await mRes.json();
-                  driveTime = new Date(meta.modifiedTime);
-                }
-              } catch (e) {}
+                if (upRes.ok) updated++;
+                else errors++;
 
-              // Drive の方が新しければスキップ（コンフリクト回避）
-              if (ghTime && driveTime && driveTime >= ghTime) {
-                skipped++;
-                continue;
+              } else {
+                // ── 新規ファイル: Drive にフォルダ階層を作成してファイルを新規作成 ──
+                const pathSegments = ghFile.path.split('/');
+                const fileName = pathSegments.pop();
+                // フォルダ階層を確保（サブフォルダがある場合）
+                let parentFolderId = topFolderId;
+                if (pathSegments.length > 0) {
+                  parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
+                }
+
+                // GitHub の内容を取得
+                const contentRes = await fetch(
+                  'https://api.github.com/repos/' + repo + '/contents/' + encodeURIComponent(ghFile.path).replace(/%2F/g, '/') + '?ref=' + state.githubBranch,
+                  { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+                );
+                if (!contentRes.ok) { errors++; continue; }
+                const contentData = await contentRes.json();
+                const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
+
+                // Drive に新規作成
+                const boundary = '----MDViewerBoundary' + Date.now();
+                const mimeType = getFileMime(fileName);
+                const metadata = JSON.stringify({
+                  name: fileName,
+                  mimeType: mimeType,
+                  parents: [parentFolderId]
+                });
+                const body =
+                  '--' + boundary + '\r\n' +
+                  'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+                  metadata + '\r\n' +
+                  '--' + boundary + '\r\n' +
+                  'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
+                  content + '\r\n' +
+                  '--' + boundary + '--';
+
+                const upRes = await fetch(
+                  'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+                  {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': 'Bearer ' + state.gdriveToken,
+                      'Content-Type': 'multipart/related; boundary=' + boundary
+                    },
+                    body: body
+                  }
+                );
+                if (upRes.ok) created++;
+                else errors++;
               }
-
-              // GitHub の内容を取得
-              const contentRes = await fetch(
-                'https://api.github.com/repos/' + repo + '/contents/' + ghFile.path + '?ref=' + state.githubBranch,
-                { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
-              );
-              if (!contentRes.ok) { errors++; continue; }
-              const contentData = await contentRes.json();
-              const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
-
-              // Drive に上書き
-              const boundary = '----MDViewerBoundary' + Date.now();
-              const mimeType = getFileMime(ghFile.path);
-              const metadata = JSON.stringify({ mimeType: mimeType });
-              const body =
-                '--' + boundary + '\r\n' +
-                'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-                metadata + '\r\n' +
-                '--' + boundary + '\r\n' +
-                'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
-                content + '\r\n' +
-                '--' + boundary + '--';
-
-              const upRes = await fetch(
-                'https://www.googleapis.com/upload/drive/v3/files/' + driveFile.id + '?uploadType=multipart',
-                {
-                  method: 'PATCH',
-                  headers: {
-                    'Authorization': 'Bearer ' + state.gdriveToken,
-                    'Content-Type': 'multipart/related; boundary=' + boundary
-                  },
-                  body: body
-                }
-              );
-              if (upRes.ok) updated++;
-              else errors++;
             } catch (e) { errors++; }
           }
         } catch (e) { errors++; }
       }
 
-      showToast('Pull 完了: ' + updated + '件更新 / ' + skipped + '件スキップ' + (errors > 0 ? ' / ' + errors + '件エラー' : ''), updated > 0 ? 'success' : 'info');
+      var msg = 'Pull 完了: ';
+      if (created > 0) msg += created + '件新規作成 / ';
+      msg += updated + '件更新 / ' + skipped + '件スキップ';
+      if (errors > 0) msg += ' / ' + errors + '件エラー';
+      showToast(msg, (updated > 0 || created > 0) ? 'success' : 'info');
       // ファイル一覧を再取得
-      if (updated > 0) refreshFiles();
+      if (updated > 0 || created > 0) refreshFiles();
     }
 
     // ============================================================
@@ -3478,7 +3590,7 @@
       document.querySelectorAll('.settings-section input').forEach(i => i.value = '');
       document.getElementById('gdrive-client-id').value = '975677173358-i3rdoqc0je229uobr9cqq1sb63ett2pp.apps.googleusercontent.com';
       document.getElementById('github-branch').value = 'main';
-      document.getElementById('repo-mapping-list').innerHTML = '';
+      document.getElementById('repo-checkbox-list').innerHTML = '';
       document.getElementById('github-repo-section').style.display = 'none';
       updateGdriveStatus(false);
       updateGithubStatus(false);
@@ -3549,7 +3661,23 @@
     // ============================================================
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js')
-        .then(() => console.log('Service Worker 登録完了'))
+        .then(reg => {
+          console.log('Service Worker 登録完了');
+          // 新しい SW が見つかったら自動で有効化してリロード
+          reg.addEventListener('updatefound', () => {
+            const newSW = reg.installing;
+            if (newSW) {
+              newSW.addEventListener('statechange', () => {
+                if (newSW.state === 'activated' && navigator.serviceWorker.controller) {
+                  showToast('アプリが更新されました。リロードします…', 'success');
+                  setTimeout(() => location.reload(), 1000);
+                }
+              });
+            }
+          });
+          // 起動時に毎回更新チェック
+          reg.update();
+        })
         .catch(err => console.warn('SW 登録失敗:', err));
     }
 
