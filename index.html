@@ -2285,21 +2285,21 @@
           }
         }
 
-        // 5. Base64 デコードして内容を取得
-        const ghContent = decodeURIComponent(escape(atob(ghData.content.replace(/\n/g, ''))));
+        // 5. Base64 デコード（バイナリ対応）
+        var rawStr = atob(ghData.content.replace(/\n/g, ''));
+        var bytes = new Uint8Array(rawStr.length);
+        for (var i = 0; i < rawStr.length; i++) bytes[i] = rawStr.charCodeAt(i);
 
-        // 6. Drive に上書き保存
-        const boundary = '----MDViewerBoundary' + Date.now();
-        const mimeType = getFileMime(state.currentFile.name);
-        const metadata = JSON.stringify({ mimeType: mimeType });
-        const uploadBody =
-          '--' + boundary + '\r\n' +
-          'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-          metadata + '\r\n' +
-          '--' + boundary + '\r\n' +
-          'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
-          ghContent + '\r\n' +
-          '--' + boundary + '--';
+        // 6. Drive に上書き保存（Blob でバイナリ安全）
+        var mimeType = getFileMime(state.currentFile.name);
+        var boundary = '----MDViewerBoundary' + Date.now();
+        var uploadBody = new Blob([
+          '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n',
+          JSON.stringify({ mimeType: mimeType }),
+          '\r\n--' + boundary + '\r\nContent-Type: ' + mimeType + '\r\n\r\n',
+          bytes,
+          '\r\n--' + boundary + '--'
+        ]);
 
         const driveRes = await fetch(
           'https://www.googleapis.com/upload/drive/v3/files/' + state.currentFile.id + '?uploadType=multipart',
@@ -2314,14 +2314,18 @@
         );
         if (!driveRes.ok) throw new Error('Drive への保存失敗: ' + driveRes.status);
 
-        // 7. 画面上の内容を更新
-        state.currentContent = ghContent;
-        if (state.activeTabIndex >= 0 && state.activeTabIndex < state.openTabs.length) {
-          state.openTabs[state.activeTabIndex].content = ghContent;
-        }
-        renderByType(ghContent, getFileType(state.currentFile.name));
-        if (state.isEditing) {
-          document.getElementById('editor-content').value = ghContent;
+        // 7. 画面上の内容を更新（テキスト系のみ）
+        var ft = getFileType(state.currentFile.name);
+        if (ft !== 'image' && ft !== 'pdf' && ft !== 'other') {
+          var ghContent = decodeURIComponent(escape(rawStr));
+          state.currentContent = ghContent;
+          if (state.activeTabIndex >= 0 && state.activeTabIndex < state.openTabs.length) {
+            state.openTabs[state.activeTabIndex].content = ghContent;
+          }
+          renderByType(ghContent, ft);
+          if (state.isEditing) {
+            document.getElementById('editor-content').value = ghContent;
+          }
         }
 
         showToast('GitHub から Pull しました: ' + filePath, 'success');
@@ -2389,6 +2393,51 @@
         }
       }
       return currentParentId;
+    }
+
+    // GitHub からファイルを取得して Drive にアップロード（バイナリ対応）
+    async function fetchGitHubAndUploadToDrive(repo, ghPath, driveFileId, parentFolderId, fileName) {
+      // GitHub からファイル内容を取得
+      const contentRes = await fetch(
+        'https://api.github.com/repos/' + repo + '/contents/' + encodeURIComponent(ghPath).replace(/%2F/g, '/') + '?ref=' + state.githubBranch,
+        { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+      );
+      if (!contentRes.ok) return false;
+      const contentData = await contentRes.json();
+
+      // Base64 → Uint8Array（バイナリ安全）
+      var raw = atob(contentData.content.replace(/\n/g, ''));
+      var bytes = new Uint8Array(raw.length);
+      for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+
+      var mimeType = getFileMime(ghPath);
+      var metadata = driveFileId
+        ? JSON.stringify({ mimeType: mimeType })
+        : JSON.stringify({ name: fileName, mimeType: mimeType, parents: [parentFolderId] });
+
+      var boundary = '----MDViewerBoundary' + Date.now();
+      var body = new Blob([
+        '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n',
+        metadata,
+        '\r\n--' + boundary + '\r\nContent-Type: ' + mimeType + '\r\n\r\n',
+        bytes,
+        '\r\n--' + boundary + '--'
+      ]);
+
+      var url = driveFileId
+        ? 'https://www.googleapis.com/upload/drive/v3/files/' + driveFileId + '?uploadType=multipart'
+        : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+      var method = driveFileId ? 'PATCH' : 'POST';
+
+      var upRes = await fetch(url, {
+        method: method,
+        headers: {
+          'Authorization': 'Bearer ' + state.gdriveToken,
+          'Content-Type': 'multipart/related; boundary=' + boundary
+        },
+        body: body
+      });
+      return upRes.ok;
     }
 
     async function pullAllFromGitHub() {
@@ -2459,10 +2508,8 @@
           if (!treeRes.ok) { errors++; continue; }
           const treeData = await treeRes.json();
 
-          // 対象ファイル（md, csv, txt, py, ipynb）
-          const targetFiles = (treeData.tree || []).filter(f =>
-            f.type === 'blob' && (f.path.endsWith('.md') || f.path.endsWith('.csv') || f.path.endsWith('.txt') || f.path.endsWith('.py') || f.path.endsWith('.ipynb'))
-          );
+          // 対象ファイル（全 blob）
+          const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob');
 
           for (const ghFile of targetFiles) {
             try {
@@ -2502,94 +2549,30 @@
                   continue;
                 }
 
-                // GitHub の内容を取得して Drive に上書き
-                const contentRes = await fetch(
-                  'https://api.github.com/repos/' + repo + '/contents/' + encodeURIComponent(ghFile.path).replace(/%2F/g, '/') + '?ref=' + state.githubBranch,
-                  { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
-                );
-                if (!contentRes.ok) { errors++; continue; }
-                const contentData = await contentRes.json();
-                const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
-
-                const boundary = '----MDViewerBoundary' + Date.now();
-                const mimeType = getFileMime(ghFile.path);
-                const metadata = JSON.stringify({ mimeType: mimeType });
-                const body =
-                  '--' + boundary + '\r\n' +
-                  'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-                  metadata + '\r\n' +
-                  '--' + boundary + '\r\n' +
-                  'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
-                  content + '\r\n' +
-                  '--' + boundary + '--';
-
-                const upRes = await fetch(
-                  'https://www.googleapis.com/upload/drive/v3/files/' + driveFile.id + '?uploadType=multipart',
-                  {
-                    method: 'PATCH',
-                    headers: {
-                      'Authorization': 'Bearer ' + state.gdriveToken,
-                      'Content-Type': 'multipart/related; boundary=' + boundary
-                    },
-                    body: body
-                  }
-                );
-                if (upRes.ok) updated++;
-                else errors++;
+                // GitHub から取得して Drive に上書き（バイナリ対応）
+                var ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, driveFile.id, null, null);
+                if (ok) updated++; else errors++;
 
               } else {
                 // ── 新規ファイル: Drive にフォルダ階層を作成してファイルを新規作成 ──
                 const pathSegments = ghFile.path.split('/');
                 const fileName = pathSegments.pop();
-                // フォルダ階層を確保（サブフォルダがある場合）
                 let parentFolderId = topFolderId;
                 if (pathSegments.length > 0) {
                   parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
                 }
 
-                // GitHub の内容を取得
-                const contentRes = await fetch(
-                  'https://api.github.com/repos/' + repo + '/contents/' + encodeURIComponent(ghFile.path).replace(/%2F/g, '/') + '?ref=' + state.githubBranch,
-                  { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
-                );
-                if (!contentRes.ok) { errors++; continue; }
-                const contentData = await contentRes.json();
-                const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
-
-                // Drive に新規作成
-                const boundary = '----MDViewerBoundary' + Date.now();
-                const mimeType = getFileMime(fileName);
-                const metadata = JSON.stringify({
-                  name: fileName,
-                  mimeType: mimeType,
-                  parents: [parentFolderId]
-                });
-                const body =
-                  '--' + boundary + '\r\n' +
-                  'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-                  metadata + '\r\n' +
-                  '--' + boundary + '\r\n' +
-                  'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
-                  content + '\r\n' +
-                  '--' + boundary + '--';
-
-                const upRes = await fetch(
-                  'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
-                  {
-                    method: 'POST',
-                    headers: {
-                      'Authorization': 'Bearer ' + state.gdriveToken,
-                      'Content-Type': 'multipart/related; boundary=' + boundary
-                    },
-                    body: body
-                  }
-                );
-                if (upRes.ok) created++;
-                else errors++;
+                var ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, null, parentFolderId, fileName);
+                if (ok) created++; else errors++;
               }
             } catch (e) { errors++; }
           }
         } catch (e) { errors++; }
+      }
+
+      // .git refs を同期（各リポジトリごと）
+      for (var folder of Object.keys(state.repoMappings)) {
+        await syncGitRefsAfterPull(folder, state.repoMappings[folder]);
       }
 
       var msg = 'Pull 完了: ';
@@ -2648,9 +2631,7 @@
         if (!treeRes.ok) throw new Error('ツリー取得失敗: ' + treeRes.status);
         const treeData = await treeRes.json();
 
-        const targetFiles = (treeData.tree || []).filter(f =>
-          f.type === 'blob' && (f.path.endsWith('.md') || f.path.endsWith('.csv') || f.path.endsWith('.txt') || f.path.endsWith('.py') || f.path.endsWith('.ipynb'))
-        );
+        const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob');
 
         const createdFolderCache = new Map();
 
@@ -2717,32 +2698,9 @@
                 continue;
               }
 
-              // GitHub から取得して Drive に上書き
-              const contentRes = await fetch(
-                'https://api.github.com/repos/' + repo + '/contents/' + encodeURIComponent(ghFile.path).replace(/%2F/g, '/') + '?ref=' + state.githubBranch,
-                { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
-              );
-              if (!contentRes.ok) { errors++; continue; }
-              const contentData = await contentRes.json();
-              const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
-
-              const boundary = '----MDViewerBoundary' + Date.now();
-              const mimeType = getFileMime(ghFile.path);
-              const metadata = JSON.stringify({ mimeType: mimeType });
-              const body =
-                '--' + boundary + '\r\n' +
-                'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-                metadata + '\r\n' +
-                '--' + boundary + '\r\n' +
-                'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
-                content + '\r\n' +
-                '--' + boundary + '--';
-
-              const upRes = await fetch(
-                'https://www.googleapis.com/upload/drive/v3/files/' + driveFile.id + '?uploadType=multipart',
-                { method: 'PATCH', headers: { 'Authorization': 'Bearer ' + state.gdriveToken, 'Content-Type': 'multipart/related; boundary=' + boundary }, body: body }
-              );
-              if (upRes.ok) updated++; else errors++;
+              // GitHub から取得して Drive に上書き（バイナリ対応）
+              var ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, driveFile.id, null, null);
+              if (ok) updated++; else errors++;
 
             } else {
               // 新規ファイル
@@ -2753,31 +2711,8 @@
                 parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
               }
 
-              const contentRes = await fetch(
-                'https://api.github.com/repos/' + repo + '/contents/' + encodeURIComponent(ghFile.path).replace(/%2F/g, '/') + '?ref=' + state.githubBranch,
-                { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
-              );
-              if (!contentRes.ok) { errors++; continue; }
-              const contentData = await contentRes.json();
-              const content = decodeURIComponent(escape(atob(contentData.content.replace(/\n/g, ''))));
-
-              const boundary = '----MDViewerBoundary' + Date.now();
-              const mimeType = getFileMime(fileName);
-              const metadata = JSON.stringify({ name: fileName, mimeType: mimeType, parents: [parentFolderId] });
-              const body =
-                '--' + boundary + '\r\n' +
-                'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-                metadata + '\r\n' +
-                '--' + boundary + '\r\n' +
-                'Content-Type: ' + mimeType + '; charset=UTF-8\r\n\r\n' +
-                content + '\r\n' +
-                '--' + boundary + '--';
-
-              const upRes = await fetch(
-                'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
-                { method: 'POST', headers: { 'Authorization': 'Bearer ' + state.gdriveToken, 'Content-Type': 'multipart/related; boundary=' + boundary }, body: body }
-              );
-              if (upRes.ok) created++; else errors++;
+              var ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, null, parentFolderId, fileName);
+              if (ok) created++; else errors++;
             }
           } catch (e) { errors++; }
         }
@@ -2788,6 +2723,9 @@
         return;
       }
 
+      // .git refs を同期
+      await syncGitRefsAfterPull(folder, repo);
+
       btn.innerHTML = origText;
       btn.disabled = false;
 
@@ -2797,6 +2735,106 @@
       if (errors > 0) msg += ' / ' + errors + '件エラー';
       showToast(msg, (updated > 0 || created > 0) ? 'success' : 'info');
       if (updated > 0 || created > 0) refreshFiles();
+    }
+
+    // ============================================================
+    // Pull 後の .git refs 同期（Mac 側の git pull を高速化）
+    // ============================================================
+    // GitHub の最新コミット SHA を取得
+    async function getLatestCommitSha(repo, branch) {
+      var res = await fetch(
+        'https://api.github.com/repos/' + repo + '/git/ref/heads/' + branch,
+        { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+      );
+      if (!res.ok) return null;
+      var data = await res.json();
+      return data.object ? data.object.sha : null;
+    }
+
+    // Drive 上でフォルダパスを辿ってファイル ID を取得
+    async function findDriveFileByPath(rootFolderId, pathParts) {
+      var currentParentId = rootFolderId;
+      for (var i = 0; i < pathParts.length; i++) {
+        var name = pathParts[i];
+        var isLast = (i === pathParts.length - 1);
+        var mimeFilter = isLast ? '' : " and mimeType='application/vnd.google-apps.folder'";
+        var q = "name='" + name.replace(/'/g, "\\'") + "' and '" + currentParentId + "' in parents and trashed=false" + mimeFilter;
+        var res = await fetch(
+          'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q) + '&fields=files(id)',
+          { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+        );
+        if (!res.ok) return null;
+        var data = await res.json();
+        if (!data.files || data.files.length === 0) return null;
+        currentParentId = data.files[0].id;
+      }
+      return currentParentId;
+    }
+
+    // Pull 後に .git/refs を Drive 上で更新
+    async function syncGitRefsAfterPull(repoFolderName, repo) {
+      try {
+        var branch = state.githubBranch || 'main';
+
+        // 1. GitHub の最新コミット SHA を取得
+        var sha = await getLatestCommitSha(repo, branch);
+        if (!sha) return;
+
+        // 2. Drive 上のリポジトリフォルダを探す
+        var rootId = state.gdriveFolderId || null;
+        if (!rootId) return;
+        var repoFolderId = await findDriveFileByPath(rootId, [repoFolderName]);
+        if (!repoFolderId) return;
+
+        // 3. .git/refs/remotes/origin/{branch} を更新
+        var refFileId = await findDriveFileByPath(repoFolderId, ['.git', 'refs', 'remotes', 'origin', branch]);
+        if (refFileId) {
+          var refContent = sha + '\n';
+          var boundary = '----GitRefSync' + Date.now();
+          var body = new Blob([
+            '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n',
+            JSON.stringify({ mimeType: 'text/plain' }),
+            '\r\n--' + boundary + '\r\nContent-Type: text/plain\r\n\r\n',
+            refContent,
+            '\r\n--' + boundary + '--'
+          ]);
+          await fetch(
+            'https://www.googleapis.com/upload/drive/v3/files/' + refFileId + '?uploadType=multipart',
+            {
+              method: 'PATCH',
+              headers: { 'Authorization': 'Bearer ' + state.gdriveToken, 'Content-Type': 'multipart/related; boundary=' + boundary },
+              body: body
+            }
+          );
+        }
+
+        // 4. .git/FETCH_HEAD を更新
+        var fetchHeadId = await findDriveFileByPath(repoFolderId, ['.git', 'FETCH_HEAD']);
+        if (fetchHeadId) {
+          var fetchHeadContent = sha + '\t\tbranch \'' + branch + '\' of https://github.com/' + repo + '\n';
+          var boundary2 = '----GitRefSync' + Date.now();
+          var body2 = new Blob([
+            '--' + boundary2 + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n',
+            JSON.stringify({ mimeType: 'text/plain' }),
+            '\r\n--' + boundary2 + '\r\nContent-Type: text/plain\r\n\r\n',
+            fetchHeadContent,
+            '\r\n--' + boundary2 + '--'
+          ]);
+          await fetch(
+            'https://www.googleapis.com/upload/drive/v3/files/' + fetchHeadId + '?uploadType=multipart',
+            {
+              method: 'PATCH',
+              headers: { 'Authorization': 'Bearer ' + state.gdriveToken, 'Content-Type': 'multipart/related; boundary=' + boundary2 },
+              body: body2
+            }
+          );
+        }
+
+        console.log('[syncGitRefs] ' + repo + ': refs updated to ' + sha.substring(0, 7));
+      } catch (e) {
+        console.warn('[syncGitRefs] ' + repo + ': failed -', e.message);
+        // refs 同期の失敗は Pull 結果に影響させない
+      }
     }
 
     // ============================================================
@@ -4123,9 +4161,29 @@
       return map[t] || map.other;
     }
     function getFileMime(name) {
-      var t = getFileType(name);
-      var map = { md: 'text/markdown', csv: 'text/csv', txt: 'text/plain', py: 'text/x-python', ipynb: 'application/json', image: 'image/*' };
-      return map[t] || 'text/plain';
+      if (!name) return 'text/plain';
+      var n = name.toLowerCase();
+      var extMap = {
+        md: 'text/markdown', csv: 'text/csv', txt: 'text/plain',
+        py: 'text/x-python', ipynb: 'application/json',
+        js: 'text/javascript', jsx: 'text/javascript', ts: 'text/typescript', tsx: 'text/typescript',
+        html: 'text/html', htm: 'text/html', xml: 'application/xml', css: 'text/css',
+        scss: 'text/x-scss', sass: 'text/x-sass', less: 'text/x-less',
+        json: 'application/json', yaml: 'text/yaml', yml: 'text/yaml',
+        toml: 'text/plain', ini: 'text/plain', cfg: 'text/plain', conf: 'text/plain',
+        sh: 'text/x-shellscript', bash: 'text/x-shellscript', zsh: 'text/x-shellscript',
+        rb: 'text/x-ruby', pl: 'text/x-perl', php: 'text/x-php',
+        java: 'text/x-java', kt: 'text/x-kotlin', swift: 'text/x-swift',
+        go: 'text/x-go', rs: 'text/x-rustsrc', c: 'text/x-c', cpp: 'text/x-c++',
+        h: 'text/x-c', hpp: 'text/x-c++', cs: 'text/x-csharp',
+        sql: 'text/x-sql', r: 'text/x-r', lua: 'text/x-lua',
+        png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+        svg: 'image/svg+xml', webp: 'image/webp', bmp: 'image/bmp', ico: 'image/x-icon',
+        pdf: 'application/pdf', zip: 'application/zip', gz: 'application/gzip',
+        mp3: 'audio/mpeg', mp4: 'video/mp4', wav: 'audio/wav'
+      };
+      var ext = n.split('.').pop();
+      return extMap[ext] || 'application/octet-stream';
     }
 
     // ============================================================
