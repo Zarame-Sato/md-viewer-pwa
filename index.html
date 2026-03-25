@@ -2508,8 +2508,8 @@
           if (!treeRes.ok) { errors++; continue; }
           const treeData = await treeRes.json();
 
-          // 対象ファイル（全 blob）
-          const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob');
+          // 対象ファイル（全 blob、.git/ 配下は除外）
+          const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob' && !f.path.startsWith('.git/') && f.path !== '.git');
 
           for (const ghFile of targetFiles) {
             try {
@@ -2529,7 +2529,7 @@
                     const commits = await cRes.json();
                     if (commits.length > 0) ghTime = new Date(commits[0].commit.committer.date);
                   }
-                } catch (e) {}
+                } catch (e) { console.warn('[Pull] GitHub commit取得エラー:', ghFile.path, e.message); }
 
                 let driveTime = null;
                 try {
@@ -2541,10 +2541,16 @@
                     const meta = await mRes.json();
                     driveTime = new Date(meta.modifiedTime);
                   }
-                } catch (e) {}
+                } catch (e) { console.warn('[Pull] Drive modifiedTime取得エラー:', ghFile.path, e.message); }
 
+                // タイムスタンプ取得失敗時はスキップ（不要な全件更新を防止）
+                if (!ghTime || !driveTime) {
+                  console.warn('[Pull] タイムスタンプ取得失敗のためスキップ:', ghFile.path, 'ghTime=', ghTime, 'driveTime=', driveTime);
+                  skipped++;
+                  continue;
+                }
                 // Drive の方が新しければスキップ（コンフリクト回避）
-                if (ghTime && driveTime && driveTime >= ghTime) {
+                if (driveTime >= ghTime) {
                   skipped++;
                   continue;
                 }
@@ -2631,7 +2637,7 @@
         if (!treeRes.ok) throw new Error('ツリー取得失敗: ' + treeRes.status);
         const treeData = await treeRes.json();
 
-        const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob');
+        const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob' && !f.path.startsWith('.git/') && f.path !== '.git');
 
         const createdFolderCache = new Map();
 
@@ -2678,7 +2684,7 @@
                   const commits = await cRes.json();
                   if (commits.length > 0) ghTime = new Date(commits[0].commit.committer.date);
                 }
-              } catch (e) {}
+              } catch (e) { console.warn('[Pull] GitHub commit取得エラー:', ghFile.path, e.message); }
 
               let driveTime = null;
               try {
@@ -2690,10 +2696,16 @@
                   const meta = await mRes.json();
                   driveTime = new Date(meta.modifiedTime);
                 }
-              } catch (e) {}
+              } catch (e) { console.warn('[Pull] Drive modifiedTime取得エラー:', ghFile.path, e.message); }
 
+              // タイムスタンプ取得失敗時はスキップ（不要な全件更新を防止）
+              if (!ghTime || !driveTime) {
+                console.warn('[Pull] タイムスタンプ取得失敗のためスキップ:', ghFile.path, 'ghTime=', ghTime, 'driveTime=', driveTime);
+                skipped++;
+                continue;
+              }
               // Drive が新しければスキップ
-              if (ghTime && driveTime && driveTime >= ghTime) {
+              if (driveTime >= ghTime) {
                 skipped++;
                 continue;
               }
