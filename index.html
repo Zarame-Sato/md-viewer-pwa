@@ -2508,8 +2508,8 @@
           if (!treeRes.ok) { errors++; continue; }
           const treeData = await treeRes.json();
 
-          // 対象ファイル（全 blob、.git/ 配下は除外）
-          const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob' && !f.path.startsWith('.git/') && f.path !== '.git');
+          // 対象ファイル（全 blob、.git/ および .venv/ 配下は除外）
+          const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob' && !f.path.startsWith('.git/') && f.path !== '.git' && !f.path.startsWith('.venv/') && f.path !== '.venv');
 
           for (const ghFile of targetFiles) {
             try {
@@ -2637,7 +2637,7 @@
         if (!treeRes.ok) throw new Error('ツリー取得失敗: ' + treeRes.status);
         const treeData = await treeRes.json();
 
-        const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob' && !f.path.startsWith('.git/') && f.path !== '.git');
+        const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob' && !f.path.startsWith('.git/') && f.path !== '.git' && !f.path.startsWith('.venv/') && f.path !== '.venv');
 
         const createdFolderCache = new Map();
 
