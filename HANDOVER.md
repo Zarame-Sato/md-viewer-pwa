@@ -5,6 +5,19 @@
 
 ---
 
+## びばの全プロジェクト
+
+| プロジェクト | パス | 地図 |
+|-------------|------|------|
+| **TradeBot** | `/Users/Vaio/Project/01_TradeBot/` | `_map/` |
+| **note執筆** | `~/マイドライブ/2001_Project/article/` | `_map/` |
+| **自主勉強** | `~/マイドライブ/1000_jishu-benkyo/` | `_map/` |
+| **knowledge-base** | `~/マイドライブ/2001_Project/knowledge_base/` | `_map/` |
+| **2001_Project全体** | `~/マイドライブ/2001_Project/` | `_map/` |
+| **md-viewer-pwa** | `~/マイドライブ/2001_Project/md-viewer-pwa/` | **ここ** |
+
+---
+
 ## 1. プロジェクト概要
 
 Google Drive の `.md` ファイルを iPhone/iPad で閲覧・編集し、GitHub に push できる PWA。
