@@ -1554,7 +1554,12 @@
         if (cache.mappingKey !== currentMappingKey) return null;
         // ルートフォルダが変わった → 無効
         if ((cache.rootId || '') !== (state.gdriveFolderId || '')) return null;
-        return cache.files || null;
+        // 古いキャッシュに残る .git/.venv 配下を除外（表示・検索の高速化）
+        const files = (cache.files || []).filter(f => {
+          const p = f.drivePath || f.path || f.name || '';
+          return !/(?:^|\/)\.git(?:\/|$)/.test(p) && !/(?:^|\/)\.venv(?:\/|$)/.test(p);
+        });
+        return files;
       } catch (e) { return null; }
     }
 
@@ -1601,23 +1606,16 @@
       }
     }
 
-    // 爆速版: 全フォルダ + 全ファイルを2クエリで取得してパス組み立て
+    // 爆速版: マッピング配下の「許可フォルダ」だけを対象にファイル取得
+    // .git / .venv サブツリーは取得自体をスキップして通信量を削減する
     async function fetchLatestDriveFiles() {
-      // ── 2つのクエリを同時に発行（並列） ──
-      const [allFolders, allTargetFiles] = await Promise.all([
-        // ① Drive 内の全フォルダ（id, name, parents）
-        driveListAll(
-          "mimeType='application/vnd.google-apps.folder' and trashed=false",
-          'id,name,parents'
-        ),
-        // ② Drive 内の全ファイル（Google Docs等のネイティブ形式を除く）
-        driveListAll(
-          "mimeType!='application/vnd.google-apps.folder' and mimeType!='application/vnd.google-apps.document' and mimeType!='application/vnd.google-apps.spreadsheet' and mimeType!='application/vnd.google-apps.presentation' and mimeType!='application/vnd.google-apps.form' and mimeType!='application/vnd.google-apps.site' and trashed=false",
-          'id,name,mimeType,modifiedTime,size,parents'
-        )
-      ]);
+      // ① 全フォルダ一覧を取得（ファイルと比べて数が少ないので軽い）
+      const allFolders = await driveListAll(
+        "mimeType='application/vnd.google-apps.folder' and trashed=false",
+        'id,name,parents'
+      );
 
-      // ── フォルダIDマップを構築（メモリ上） ──
+      // ── フォルダIDマップ構築 ──
       const folderMap = new Map();
       for (const f of allFolders) {
         folderMap.set(f.id, {
@@ -1629,60 +1627,81 @@
       // ── ルートフォルダID ──
       const rootId = state.gdriveFolderId || null;
 
-      // ── マッピング対象フォルダのIDを特定 ──
-      // マッピングがあれば、そのフォルダ名に一致するフォルダIDだけを許可リストにする
+      // ── マッピング対象フォルダ（トップレベル）のIDを特定 ──
       const mappingFolderNames = Object.keys(state.repoMappings);
-      const allowedRootIds = new Set(); // 表示を許可するトップレベルフォルダのID
-
+      const mappedTopIds = new Set();
       if (mappingFolderNames.length > 0) {
-        // マッピングされたフォルダ名と一致するフォルダIDを探す
         for (const [fId, fData] of folderMap) {
           if (mappingFolderNames.includes(fData.name)) {
-            // ルートフォルダ指定がある場合: その直下のフォルダか確認
             if (rootId) {
-              if (fData.parentId === rootId) allowedRootIds.add(fId);
+              if (fData.parentId === rootId) mappedTopIds.add(fId);
             } else {
-              allowedRootIds.add(fId);
+              mappedTopIds.add(fId);
             }
           }
         }
       }
 
-      // ── あるファイルが許可フォルダ配下かを判定するヘルパー ──
-      function isFileAllowed(parentId) {
-        // マッピングなし → ここに来ることはないが安全のため拒否
-        if (mappingFolderNames.length === 0) return false;
+      if (mappedTopIds.size === 0) return [];
 
-        // マッピングあり → 許可フォルダのどれかの配下かチェック
-        let current = parentId;
-        let safety = 20;
-        while (current && safety-- > 0) {
-          if (allowedRootIds.has(current)) return true;
-          if (current === rootId) return false; // ルートに達したが許可フォルダを経由してない
-          const folder = folderMap.get(current);
-          if (!folder) break;
-          current = folder.parentId;
-        }
-        return false;
+      // ── 親→子のマップを構築（BFS 用） ──
+      const childrenMap = new Map();
+      for (const [fId, fData] of folderMap) {
+        if (!fData.parentId) continue;
+        if (!childrenMap.has(fData.parentId)) childrenMap.set(fData.parentId, []);
+        childrenMap.get(fData.parentId).push(fId);
       }
 
-      // ── 許可フォルダ配下のファイルをフィルタ + パスを組み立て ──
-      // パス組み立ての起点: マッピングあり → 許可フォルダID, なし → rootId
-      const pathRootIds = allowedRootIds.size > 0 ? allowedRootIds : (rootId ? new Set([rootId]) : null);
+      // ── マッピング配下を BFS で走査、.git/.venv サブツリーを除外した許可フォルダ集合を構築 ──
+      const excludedNames = new Set(['.git', '.venv']);
+      const allowedFolderIds = new Set();
+      const queue = Array.from(mappedTopIds);
+      while (queue.length > 0) {
+        const curr = queue.shift();
+        const currData = folderMap.get(curr);
+        if (!currData) continue;
+        if (excludedNames.has(currData.name)) continue; // サブツリーごとスキップ
+        allowedFolderIds.add(curr);
+        const children = childrenMap.get(curr) || [];
+        for (const c of children) queue.push(c);
+      }
 
+      if (allowedFolderIds.size === 0) return [];
+
+      // ② 許可フォルダ配下のファイルをチャンク分けして並列取得
+      //    Drive API の q パラメータは URL 長制限があるので、親IDを30個ずつに分割
+      const allowedArray = Array.from(allowedFolderIds);
+      const CHUNK_SIZE = 30;
+      const excludeMime =
+        "mimeType!='application/vnd.google-apps.folder' and " +
+        "mimeType!='application/vnd.google-apps.document' and " +
+        "mimeType!='application/vnd.google-apps.spreadsheet' and " +
+        "mimeType!='application/vnd.google-apps.presentation' and " +
+        "mimeType!='application/vnd.google-apps.form' and " +
+        "mimeType!='application/vnd.google-apps.site' and " +
+        "trashed=false";
+
+      const fetchPromises = [];
+      for (let i = 0; i < allowedArray.length; i += CHUNK_SIZE) {
+        const chunk = allowedArray.slice(i, i + CHUNK_SIZE);
+        const parentClauses = chunk.map(id => "'" + id + "' in parents").join(' or ');
+        const query = '(' + parentClauses + ') and ' + excludeMime;
+        fetchPromises.push(driveListAll(query, 'id,name,mimeType,modifiedTime,size,parents'));
+      }
+      const results = await Promise.all(fetchPromises);
+      const allTargetFiles = results.flat();
+
+      // ③ パス組み立て（マッピングトップフォルダを起点にする）
       const driveFiles = [];
       for (const f of allTargetFiles) {
         const parentId = (f.parents && f.parents[0]) || null;
+        if (!allowedFolderIds.has(parentId)) continue; // 念のため
 
-        if (!isFileAllowed(parentId)) continue;
-
-        // パス組み立て（許可フォルダ or ルートフォルダをパスの起点にする）
         const parts = [];
         let current = parentId;
         let safety = 20;
         while (current && safety-- > 0) {
-          if (pathRootIds && pathRootIds.has(current)) {
-            // 起点フォルダ自体の名前もパスに含める
+          if (mappedTopIds.has(current)) {
             const folder = folderMap.get(current);
             if (folder) parts.unshift(folder.name);
             break;
@@ -1696,9 +1715,6 @@
 
         const folderPath = parts.join('/');
         const drivePath = folderPath ? folderPath + '/' + f.name : f.name;
-
-        // .git/ および .venv/ 配下のファイルは一覧に表示しない
-        if (/(?:^|\/)\.git(?:\/|$)/.test(drivePath) || /(?:^|\/)\.venv(?:\/|$)/.test(drivePath)) continue;
 
         driveFiles.push({
           id: f.id,
