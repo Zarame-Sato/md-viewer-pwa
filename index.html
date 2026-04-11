@@ -2462,6 +2462,47 @@
       return upRes.ok;
     }
 
+    // ============================================================
+    // Pull 用: 前回 Pull 時のコミット SHA を localStorage で管理
+    // ============================================================
+    const PULL_SHA_KEY = 'mdviewer_pull_sha';
+    function getSavedPullSha(repo) {
+      try {
+        const data = JSON.parse(localStorage.getItem(PULL_SHA_KEY) || '{}');
+        return data[repo] || null;
+      } catch (e) { return null; }
+    }
+    function savePullSha(repo, sha) {
+      try {
+        const data = JSON.parse(localStorage.getItem(PULL_SHA_KEY) || '{}');
+        data[repo] = sha;
+        localStorage.setItem(PULL_SHA_KEY, JSON.stringify(data));
+      } catch (e) { /* 容量超過時は無視 */ }
+    }
+
+    // GitHub Compare API で差分ファイルを取得（ページネーション対応）
+    async function getChangedFiles(repo, baseSha, headBranch) {
+      const changedFiles = [];
+      let page = 1;
+      while (true) {
+        const res = await fetch(
+          'https://api.github.com/repos/' + repo + '/compare/' + baseSha + '...' + headBranch + '?per_page=100&page=' + page,
+          { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
+        );
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (page === 1 && data.status === 'identical') return []; // 変更なし
+        for (const f of (data.files || [])) {
+          if (f.filename.startsWith('.git/') || f.filename.startsWith('.venv/')) continue;
+          changedFiles.push({ path: f.filename, status: f.status });
+        }
+        // files が100件未満 or 全件取得済みなら終了
+        if (!data.files || data.files.length < 100) break;
+        page++;
+      }
+      return changedFiles;
+    }
+
     async function pullAllFromGitHub() {
       if (!state.githubToken || Object.keys(state.repoMappings).length === 0) {
         showToast('GitHub が未接続です', 'error');
@@ -2472,7 +2513,7 @@
         return;
       }
 
-      if (!confirm('GitHub から全ファイルを Pull します。\n・Drive に無いファイルは新規作成されます\n・既存ファイルは GitHub が新しい場合のみ上書きします\n・Drive の方が新しいファイルはスキップします\n\n続行しますか？')) {
+      if (!confirm('GitHub から Pull します。\n・前回 Pull 以降に変更があったファイルのみ同期します\n・初回は全ファイルを取得します\n\n続行しますか？')) {
         return;
       }
 
@@ -2522,25 +2563,59 @@
           }
           const topFolderId = mappingFolderIds[folder];
 
-          // リポジトリのファイルツリーを取得
+          // 最新コミット SHA を取得
+          const headSha = await getLatestCommitSha(repo, state.githubBranch);
+          if (!headSha) { errors++; continue; }
+
+          const lastSha = getSavedPullSha(repo);
+
+          // ── 差分 Pull（前回 SHA がある場合）──
+          if (lastSha) {
+            if (lastSha === headSha) { skipped++; continue; } // 変更なし
+            const changed = await getChangedFiles(repo, lastSha, state.githubBranch);
+            if (changed !== null) {
+              if (changed.length === 0) { savePullSha(repo, headSha); continue; }
+              for (const cf of changed) {
+                try {
+                  if (cf.status === 'removed') continue; // 削除はスキップ（Drive側は手動管理）
+                  const drivePath = (folder + '/' + cf.path).normalize('NFC');
+                  const driveFile = state.files.find(f => (f.drivePath || '').normalize('NFC') === drivePath);
+                  if (driveFile) {
+                    var ok = await fetchGitHubAndUploadToDrive(repo, cf.path, driveFile.id, null, null);
+                    if (ok) updated++; else errors++;
+                  } else {
+                    const pathSegments = cf.path.split('/');
+                    const fileName = pathSegments.pop();
+                    let parentFolderId = topFolderId;
+                    if (pathSegments.length > 0) {
+                      parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
+                    }
+                    var ok = await fetchGitHubAndUploadToDrive(repo, cf.path, null, parentFolderId, fileName);
+                    if (ok) created++; else errors++;
+                  }
+                } catch (e) { errors++; }
+              }
+              savePullSha(repo, headSha);
+              continue;
+            }
+            // Compare API 失敗時はフルPullにフォールバック
+          }
+
+          // ── フル Pull（初回 or Compare 失敗時）──
           const treeRes = await fetch(
             'https://api.github.com/repos/' + repo + '/git/trees/' + state.githubBranch + '?recursive=1',
             { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
           );
           if (!treeRes.ok) { errors++; continue; }
           const treeData = await treeRes.json();
-
-          // 対象ファイル（全 blob、.git/ および .venv/ 配下は除外）
           const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob' && !f.path.startsWith('.git/') && f.path !== '.git' && !f.path.startsWith('.venv/') && f.path !== '.venv');
 
           for (const ghFile of targetFiles) {
             try {
-              // Drive側で対応ファイルを探す（NFC正規化して比較。macOS NFD ≠ GitHub NFC 対策）
               const drivePath = (folder + '/' + ghFile.path).normalize('NFC');
               const driveFile = state.files.find(f => (f.drivePath || '').normalize('NFC') === drivePath);
 
               if (driveFile) {
-                // ── 既存ファイル: タイムスタンプ比較でコンフリクト回避 ──
                 let ghTime = null;
                 try {
                   const cRes = await fetch(
@@ -2551,50 +2626,32 @@
                     const commits = await cRes.json();
                     if (commits.length > 0) ghTime = new Date(commits[0].commit.committer.date);
                   }
-                } catch (e) { console.warn('[Pull] GitHub commit取得エラー:', ghFile.path, e.message); }
-
+                } catch (e) {}
                 let driveTime = null;
                 try {
                   const mRes = await fetch(
                     'https://www.googleapis.com/drive/v3/files/' + driveFile.id + '?fields=modifiedTime',
                     { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
                   );
-                  if (mRes.ok) {
-                    const meta = await mRes.json();
-                    driveTime = new Date(meta.modifiedTime);
-                  }
-                } catch (e) { console.warn('[Pull] Drive modifiedTime取得エラー:', ghFile.path, e.message); }
-
-                // タイムスタンプ取得失敗時はスキップ（不要な全件更新を防止）
-                if (!ghTime || !driveTime) {
-                  console.warn('[Pull] タイムスタンプ取得失敗のためスキップ:', ghFile.path, 'ghTime=', ghTime, 'driveTime=', driveTime);
-                  skipped++;
-                  continue;
-                }
-                // Drive の方が新しければスキップ（コンフリクト回避）
-                if (driveTime >= ghTime) {
-                  skipped++;
-                  continue;
-                }
-
-                // GitHub から取得して Drive に上書き（バイナリ対応）
+                  if (mRes.ok) { driveTime = new Date((await mRes.json()).modifiedTime); }
+                } catch (e) {}
+                if (!ghTime || !driveTime) { skipped++; continue; }
+                if (driveTime >= ghTime) { skipped++; continue; }
                 var ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, driveFile.id, null, null);
                 if (ok) updated++; else errors++;
-
               } else {
-                // ── 新規ファイル: Drive にフォルダ階層を作成してファイルを新規作成 ──
                 const pathSegments = ghFile.path.split('/');
                 const fileName = pathSegments.pop();
                 let parentFolderId = topFolderId;
                 if (pathSegments.length > 0) {
                   parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
                 }
-
                 var ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, null, parentFolderId, fileName);
                 if (ok) created++; else errors++;
               }
             } catch (e) { errors++; }
           }
+          savePullSha(repo, headSha);
         } catch (e) { errors++; }
       }
 
@@ -2651,7 +2708,101 @@
           topFolderId = topFolder.id;
         }
 
-        // GitHub ファイルツリー取得
+        const createdFolderCache = new Map();
+
+        // 最新コミット SHA を取得
+        const headSha = await getLatestCommitSha(repo, state.githubBranch);
+        if (!headSha) throw new Error('GitHub のコミット SHA 取得に失敗');
+
+        const lastSha = getSavedPullSha(repo);
+
+        // ── 差分 Pull（前回 SHA がある場合）──
+        if (lastSha) {
+          if (lastSha === headSha) {
+            btn.innerHTML = origText;
+            btn.disabled = false;
+            showToast(repo + ': 変更なし（最新です）', 'info');
+            return;
+          }
+
+          btn.textContent = 'Pull中... 差分を取得中';
+          const changed = await getChangedFiles(repo, lastSha, state.githubBranch);
+
+          if (changed !== null) {
+            if (changed.length === 0) {
+              savePullSha(repo, headSha);
+              btn.innerHTML = origText;
+              btn.disabled = false;
+              showToast(repo + ': 変更なし（最新です）', 'info');
+              return;
+            }
+
+            for (const cf of changed) {
+              try {
+                btn.textContent = 'Pull中... (' + (updated + created) + '/' + changed.length + ')';
+                if (cf.status === 'removed') continue; // 削除はスキップ（Drive側は手動管理）
+
+                const drivePath = (folder + '/' + cf.path).normalize('NFC');
+                let driveFile = state.files.find(f => (f.drivePath || '').normalize('NFC') === drivePath);
+
+                // state.files で見つからない場合、Drive を直接検索
+                if (!driveFile) {
+                  const pathSegments = cf.path.split('/');
+                  const searchName = pathSegments[pathSegments.length - 1];
+                  let searchParentId = topFolderId;
+                  if (pathSegments.length > 1) {
+                    searchParentId = await ensureDriveFolderPath(pathSegments.slice(0, -1), topFolderId, folderMap, createdFolderCache);
+                  }
+                  try {
+                    const searchRes = await fetch(
+                      'https://www.googleapis.com/drive/v3/files?q=' +
+                      encodeURIComponent("name='" + searchName.replace(/'/g, "\\'") + "' and '" + searchParentId + "' in parents and trashed=false") +
+                      '&fields=files(id,name)',
+                      { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+                    );
+                    if (searchRes.ok) {
+                      const searchData = await searchRes.json();
+                      if (searchData.files && searchData.files.length > 0) {
+                        driveFile = { id: searchData.files[0].id, name: searchName, drivePath: drivePath };
+                      }
+                    }
+                  } catch (e) { /* 検索失敗時は新規作成にフォールバック */ }
+                }
+
+                if (driveFile) {
+                  var ok = await fetchGitHubAndUploadToDrive(repo, cf.path, driveFile.id, null, null);
+                  if (ok) updated++; else errors++;
+                } else {
+                  const pathSegments = cf.path.split('/');
+                  const fileName = pathSegments.pop();
+                  let parentFolderId = topFolderId;
+                  if (pathSegments.length > 0) {
+                    parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
+                  }
+                  var ok = await fetchGitHubAndUploadToDrive(repo, cf.path, null, parentFolderId, fileName);
+                  if (ok) created++; else errors++;
+                }
+              } catch (e) { errors++; }
+            }
+
+            savePullSha(repo, headSha);
+            await syncGitRefsAfterPull(folder, repo);
+            btn.innerHTML = origText;
+            btn.disabled = false;
+            var msg = repo + ' Pull完了: ';
+            if (created > 0) msg += created + '件新規 / ';
+            msg += updated + '件更新';
+            if (errors > 0) msg += ' / ' + errors + '件エラー';
+            showToast(msg, (updated > 0 || created > 0) ? 'success' : 'info');
+            if (updated > 0 || created > 0) refreshFiles();
+            return;
+          }
+          // Compare API 失敗時はフルPullにフォールバック
+        }
+
+        // ── フル Pull（初回 or Compare 失敗時）──
+        btn.textContent = 'Pull中... (初回: 全件取得)';
+
         const treeRes = await fetch(
           'https://api.github.com/repos/' + repo + '/git/trees/' + state.githubBranch + '?recursive=1',
           { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
@@ -2661,8 +2812,6 @@
 
         const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob' && !f.path.startsWith('.git/') && f.path !== '.git' && !f.path.startsWith('.venv/') && f.path !== '.venv');
 
-        const createdFolderCache = new Map();
-
         for (const ghFile of targetFiles) {
           try {
             btn.textContent = 'Pull中... (' + (updated + created + skipped) + '/' + targetFiles.length + ')';
@@ -2670,7 +2819,6 @@
             const drivePath = (folder + '/' + ghFile.path).normalize('NFC');
             let driveFile = state.files.find(f => (f.drivePath || '').normalize('NFC') === drivePath);
 
-            // state.files で見つからない場合、Drive を直接検索して重複作成を防止
             if (!driveFile) {
               const pathSegments = ghFile.path.split('/');
               const searchName = pathSegments[pathSegments.length - 1];
@@ -2691,11 +2839,10 @@
                     driveFile = { id: searchData.files[0].id, name: searchName, drivePath: drivePath };
                   }
                 }
-              } catch (e) { /* 検索失敗時は新規作成にフォールバック */ }
+              } catch (e) {}
             }
 
             if (driveFile) {
-              // 既存ファイル: タイムスタンプ比較
               let ghTime = null;
               try {
                 const cRes = await fetch(
@@ -2706,50 +2853,33 @@
                   const commits = await cRes.json();
                   if (commits.length > 0) ghTime = new Date(commits[0].commit.committer.date);
                 }
-              } catch (e) { console.warn('[Pull] GitHub commit取得エラー:', ghFile.path, e.message); }
-
+              } catch (e) {}
               let driveTime = null;
               try {
                 const mRes = await fetch(
                   'https://www.googleapis.com/drive/v3/files/' + driveFile.id + '?fields=modifiedTime',
                   { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
                 );
-                if (mRes.ok) {
-                  const meta = await mRes.json();
-                  driveTime = new Date(meta.modifiedTime);
-                }
-              } catch (e) { console.warn('[Pull] Drive modifiedTime取得エラー:', ghFile.path, e.message); }
-
-              // タイムスタンプ取得失敗時はスキップ（不要な全件更新を防止）
-              if (!ghTime || !driveTime) {
-                console.warn('[Pull] タイムスタンプ取得失敗のためスキップ:', ghFile.path, 'ghTime=', ghTime, 'driveTime=', driveTime);
-                skipped++;
-                continue;
-              }
-              // Drive が新しければスキップ
-              if (driveTime >= ghTime) {
-                skipped++;
-                continue;
-              }
-
-              // GitHub から取得して Drive に上書き（バイナリ対応）
+                if (mRes.ok) { driveTime = new Date((await mRes.json()).modifiedTime); }
+              } catch (e) {}
+              if (!ghTime || !driveTime) { skipped++; continue; }
+              if (driveTime >= ghTime) { skipped++; continue; }
               var ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, driveFile.id, null, null);
               if (ok) updated++; else errors++;
-
             } else {
-              // 新規ファイル
               const pathSegments = ghFile.path.split('/');
               const fileName = pathSegments.pop();
               let parentFolderId = topFolderId;
               if (pathSegments.length > 0) {
                 parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
               }
-
               var ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, null, parentFolderId, fileName);
               if (ok) created++; else errors++;
             }
           } catch (e) { errors++; }
         }
+
+        savePullSha(repo, headSha);
       } catch (e) {
         showToast('Pull エラー: ' + e.message, 'error');
         btn.innerHTML = origText;
