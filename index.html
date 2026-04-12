@@ -2880,72 +2880,58 @@
 
         const targetFiles = (treeData.tree || []).filter(f => f.type === 'blob' && !f.path.startsWith('.git/') && f.path !== '.git' && !f.path.startsWith('.venv/') && f.path !== '.venv');
 
-        for (const ghFile of targetFiles) {
-          try {
-            btn.textContent = 'Pull中... (' + (updated + created + skipped) + '/' + targetFiles.length + ')';
-
-            const drivePath = (folder + '/' + ghFile.path).normalize('NFC');
-            let driveFile = state.files.find(f => (f.drivePath || '').normalize('NFC') === drivePath);
-
-            if (!driveFile) {
-              const pathSegments = ghFile.path.split('/');
-              const searchName = pathSegments[pathSegments.length - 1];
-              let searchParentId = topFolderId;
-              if (pathSegments.length > 1) {
-                searchParentId = await ensureDriveFolderPath(pathSegments.slice(0, -1), topFolderId, folderMap, createdFolderCache);
-              }
-              try {
-                const searchRes = await fetch(
-                  'https://www.googleapis.com/drive/v3/files?q=' +
-                  encodeURIComponent("name='" + searchName.replace(/'/g, "\\'") + "' and '" + searchParentId + "' in parents and trashed=false") +
-                  '&fields=files(id,name)',
-                  { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
-                );
-                if (searchRes.ok) {
-                  const searchData = await searchRes.json();
-                  if (searchData.files && searchData.files.length > 0) {
-                    driveFile = { id: searchData.files[0].id, name: searchName, drivePath: drivePath };
-                  }
-                }
-              } catch (e) {}
-            }
-
-            if (driveFile) {
-              let ghTime = null;
-              try {
-                const cRes = await fetch(
-                  'https://api.github.com/repos/' + repo + '/commits?path=' + encodeURIComponent(ghFile.path) + '&sha=' + state.githubBranch + '&per_page=1',
-                  { headers: { Authorization: 'token ' + state.githubToken, Accept: 'application/vnd.github.v3+json' } }
-                );
-                if (cRes.ok) {
-                  const commits = await cRes.json();
-                  if (commits.length > 0) ghTime = new Date(commits[0].commit.committer.date);
-                }
-              } catch (e) {}
-              let driveTime = null;
-              try {
-                const mRes = await fetch(
-                  'https://www.googleapis.com/drive/v3/files/' + driveFile.id + '?fields=modifiedTime',
-                  { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
-                );
-                if (mRes.ok) { driveTime = new Date((await mRes.json()).modifiedTime); }
-              } catch (e) {}
-              if (!ghTime || !driveTime) { skipped++; continue; }
-              if (driveTime >= ghTime) { skipped++; continue; }
-              var ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, driveFile.id, null, null);
-              if (ok) updated++; else errors++;
-            } else {
-              const pathSegments = ghFile.path.split('/');
-              const fileName = pathSegments.pop();
-              let parentFolderId = topFolderId;
-              if (pathSegments.length > 0) {
-                parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
-              }
-              var ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, null, parentFolderId, fileName);
-              if (ok) created++; else errors++;
-            }
-          } catch (e) { errors++; }
+        // state.files を drivePath でインデックス化（毎回 find() しないため）
+        const driveFilesByPath = new Map();
+        for (const f of state.files) {
+          if (f.drivePath) driveFilesByPath.set(f.drivePath.normalize('NFC'), f);
         }
+
+        // 先にフォルダを全部作る（並列化のためには親フォルダ ID が確定してる必要がある）
+        const neededFolderPaths = new Set();
+        for (const ghFile of targetFiles) {
+          const segs = ghFile.path.split('/');
+          segs.pop();
+          if (segs.length > 0) neededFolderPaths.add(segs.join('/'));
+        }
+        for (const folderPath of neededFolderPaths) {
+          await ensureDriveFolderPath(folderPath.split('/'), topFolderId, folderMap, createdFolderCache);
+        }
+
+        // 1 ファイルを処理する関数（初回フル Pull：存在すればスキップ、無ければアップ）
+        let processed = 0;
+        async function processOne(ghFile) {
+          try {
+            const drivePath = (folder + '/' + ghFile.path).normalize('NFC');
+            const driveFile = driveFilesByPath.get(drivePath);
+            if (driveFile) { skipped++; return; } // 既存ファイルは初回は信頼してスキップ
+
+            const pathSegments = ghFile.path.split('/');
+            const fileName = pathSegments.pop();
+            let parentFolderId = topFolderId;
+            if (pathSegments.length > 0) {
+              parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
+            }
+            const ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, null, parentFolderId, fileName);
+            if (ok) created++; else errors++;
+          } catch (e) { errors++; }
+          finally {
+            processed++;
+            btn.textContent = 'Pull中... (' + processed + '/' + targetFiles.length + ')';
+          }
+        }
+
+        // 8 並列で処理
+        const CONCURRENCY = 8;
+        let idx = 0;
+        async function worker() {
+          while (idx < targetFiles.length) {
+            const i = idx++;
+            await processOne(targetFiles[i]);
+          }
+        }
+        const workers = [];
+        for (let i = 0; i < CONCURRENCY; i++) workers.push(worker());
+        await Promise.all(workers);
 
         savePullSha(repo, headSha);
       } catch (e) {
