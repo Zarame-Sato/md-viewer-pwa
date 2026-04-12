@@ -1038,11 +1038,27 @@
       <div id="page-settings" class="page">
         <h2 style="font-size:20px; margin-bottom:20px;">設定</h2>
 
-        <!-- ① GitHub 設定（先に設定する） -->
+        <!-- ① Google Drive 設定（先に設定する。OAuth リダイレクトが発生するため） -->
+        <div class="settings-section">
+          <h3>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 19.5h20L12 2z"/></svg>
+            ① Google Drive
+            <span id="gdrive-status" class="status-badge disconnected" style="margin-left:auto;">
+              <span class="status-dot"></span>未接続
+            </span>
+          </h3>
+          <label>Client ID <span style="font-size:11px;color:var(--text-muted);">（設定済み・変更不要）</span></label>
+          <input type="text" id="gdrive-client-id" value="975677173358-i3rdoqc0je229uobr9cqq1sb63ett2pp.apps.googleusercontent.com" style="font-size:12px;color:var(--text-muted);">
+          <label>フォルダID <span style="font-size:11px;color:var(--text-muted);">（空欄＝Google Drive 全体から検索）</span></label>
+          <input type="text" id="gdrive-folder-id" placeholder="省略するとルートフォルダを検索">
+          <button class="btn btn-primary" onclick="connectGoogleDrive()" id="btn-gdrive-connect">Google Drive に接続</button>
+        </div>
+
+        <!-- ② GitHub 設定（Google Drive 接続後に設定する） -->
         <div class="settings-section">
           <h3>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
-            ① GitHub
+            ② GitHub
             <span id="github-status" class="status-badge disconnected" style="margin-left:auto;">
               <span class="status-dot"></span>未接続
             </span>
@@ -1076,22 +1092,6 @@
               <button class="btn btn-primary" onclick="connectGitHub()">接続する</button>
             </div>
           </div>
-        </div>
-
-        <!-- ② Google Drive 設定（GitHub マッピング後に設定する） -->
-        <div class="settings-section">
-          <h3>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 19.5h20L12 2z"/></svg>
-            ② Google Drive
-            <span id="gdrive-status" class="status-badge disconnected" style="margin-left:auto;">
-              <span class="status-dot"></span>未接続
-            </span>
-          </h3>
-          <label>Client ID <span style="font-size:11px;color:var(--text-muted);">（設定済み・変更不要）</span></label>
-          <input type="text" id="gdrive-client-id" value="975677173358-i3rdoqc0je229uobr9cqq1sb63ett2pp.apps.googleusercontent.com" style="font-size:12px;color:var(--text-muted);">
-          <label>フォルダID <span style="font-size:11px;color:var(--text-muted);">（空欄＝Google Drive 全体から検索）</span></label>
-          <input type="text" id="gdrive-folder-id" placeholder="省略するとルートフォルダを検索">
-          <button class="btn btn-primary" onclick="connectGoogleDrive()" id="btn-gdrive-connect">Google Drive に接続</button>
         </div>
 
         <!-- データ管理 -->
@@ -1209,6 +1209,25 @@
         document.getElementById('github-save-token').checked = true;
         state.githubToken = savedSettings.githubToken;
       }
+
+      // Drive OAuth リダイレクト前に sessionStorage に退避した GitHub 入力内容を復元
+      // （「保存する」にチェックしていなくても、同一セッション内は入力が維持される）
+      try {
+        const pending = sessionStorage.getItem('mdviewer_github_pending');
+        if (pending) {
+          const p = JSON.parse(pending);
+          const tokenEl = document.getElementById('github-token');
+          if (tokenEl && !tokenEl.value && p.token) {
+            tokenEl.value = p.token;
+            state.githubToken = p.token;
+          }
+          const branchEl = document.getElementById('github-branch');
+          if (branchEl && !branchEl.value && p.branch) branchEl.value = p.branch;
+          const saveEl = document.getElementById('github-save-token');
+          if (saveEl && p.saveChecked) saveEl.checked = true;
+          sessionStorage.removeItem('mdviewer_github_pending');
+        }
+      } catch (e) { /* sessionStorage 失敗時は無視 */ }
       if (savedSettings.gdriveToken) {
         document.getElementById('github-save-token').checked = true;
         // リダイレクト戻り（URLにトークンあり）の場合は古い保存トークンを使わない
@@ -1394,6 +1413,18 @@
       state.gdriveClientId = clientId;
       state.gdriveFolderId = document.getElementById('gdrive-folder-id').value.trim();
       saveSettings();  // Client ID・フォルダIDを保存
+
+      // OAuth リダイレクト後に GitHub 入力内容が消えないよう sessionStorage に退避
+      try {
+        const ghToken = document.getElementById('github-token').value || '';
+        const ghBranchEl = document.getElementById('github-branch');
+        const ghBranch = ghBranchEl ? ghBranchEl.value : '';
+        const ghSaveEl = document.getElementById('github-save-token');
+        const ghSave = ghSaveEl ? ghSaveEl.checked : false;
+        sessionStorage.setItem('mdviewer_github_pending', JSON.stringify({
+          token: ghToken, branch: ghBranch, saveChecked: ghSave
+        }));
+      } catch (e) { /* sessionStorage 失敗時は無視 */ }
 
       // OAuth2 Implicit Flow
       // iPad/iPhone ではポップアップがブロックされるため、
@@ -3124,7 +3155,7 @@
       if (files.length === 0) {
         container.innerHTML = '<div class="empty-state"><div class="icon">📄</div><p>' +
           (!state.gdriveToken
-            ? '設定画面から GitHub → Google Drive の順に接続してください'
+            ? '設定画面から Google Drive → GitHub の順に接続してください'
             : Object.keys(state.repoMappings).length === 0
               ? '先に設定画面で GitHub リポジトリのマッピングを設定してください'
               : '対応ファイルが見つかりません') +
