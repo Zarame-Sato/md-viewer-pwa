@@ -2540,14 +2540,133 @@
       } catch (e) { return null; }
     }
 
-    // 差分 Pull の基準となる SHA を解決（localStorage → Drive の順に参照）
+    // ============================================================
+    // Drive 上の .folio/sync.json で各リポジトリの SHA を管理
+    // 真のソース（端末を跨いでも、localStorage がクリアされても維持）
+    //   形式: { repos: { "owner/repo": { sha, branch, updated } } }
+    // ============================================================
+    // 一セッション中のキャッシュ（File ID と内容）
+    const _folioSyncCache = { fileId: null, data: null, loaded: false };
+
+    async function findOrCreateFolioSyncFile() {
+      const rootId = state.gdriveFolderId || null;
+      if (!rootId || !state.gdriveToken) return null;
+      if (_folioSyncCache.fileId) return _folioSyncCache.fileId;
+
+      // .folio フォルダを探す or 作成
+      let folioFolderId = await findDriveFileByPath(rootId, ['.folio']);
+      if (!folioFolderId) {
+        try {
+          const created = await createDriveFolder('.folio', rootId);
+          folioFolderId = created.id;
+        } catch (e) { return null; }
+      }
+
+      // sync.json を探す or 作成
+      let fileId = await findDriveFileByPath(folioFolderId, ['sync.json']);
+      if (!fileId) {
+        try {
+          const boundary = '----FolioSyncInit' + Date.now();
+          const body = new Blob([
+            '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n',
+            JSON.stringify({ name: 'sync.json', parents: [folioFolderId], mimeType: 'application/json' }),
+            '\r\n--' + boundary + '\r\nContent-Type: application/json\r\n\r\n',
+            JSON.stringify({ repos: {} }),
+            '\r\n--' + boundary + '--'
+          ]);
+          const res = await fetch(
+            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+            {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + state.gdriveToken, 'Content-Type': 'multipart/related; boundary=' + boundary },
+              body: body
+            }
+          );
+          if (!res.ok) return null;
+          const data = await res.json();
+          fileId = data.id;
+        } catch (e) { return null; }
+      }
+      _folioSyncCache.fileId = fileId;
+      return fileId;
+    }
+
+    async function readFolioSync() {
+      if (_folioSyncCache.loaded && _folioSyncCache.data) return _folioSyncCache.data;
+      const fileId = await findOrCreateFolioSyncFile();
+      if (!fileId) return { repos: {} };
+      try {
+        const res = await fetch(
+          'https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media',
+          { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+        );
+        if (!res.ok) return { repos: {} };
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : { repos: {} };
+        if (!data.repos) data.repos = {};
+        _folioSyncCache.data = data;
+        _folioSyncCache.loaded = true;
+        return data;
+      } catch (e) { return { repos: {} }; }
+    }
+
+    async function writeFolioSync(data) {
+      const fileId = await findOrCreateFolioSyncFile();
+      if (!fileId) return false;
+      try {
+        const boundary = '----FolioSyncWrite' + Date.now();
+        const body = new Blob([
+          '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n',
+          JSON.stringify({ mimeType: 'application/json' }),
+          '\r\n--' + boundary + '\r\nContent-Type: application/json\r\n\r\n',
+          JSON.stringify(data),
+          '\r\n--' + boundary + '--'
+        ]);
+        const res = await fetch(
+          'https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=multipart',
+          {
+            method: 'PATCH',
+            headers: { 'Authorization': 'Bearer ' + state.gdriveToken, 'Content-Type': 'multipart/related; boundary=' + boundary },
+            body: body
+          }
+        );
+        if (res.ok) {
+          _folioSyncCache.data = data;
+          _folioSyncCache.loaded = true;
+          return true;
+        }
+        return false;
+      } catch (e) { return false; }
+    }
+
+    // Drive の .folio/sync.json に SHA を書き込む（localStorage も同時更新）
+    async function saveSyncShaToDrive(repo, sha, branch) {
+      savePullSha(repo, sha); // localStorage も同期
+      if (!state.gdriveToken) return;
+      const data = await readFolioSync();
+      data.repos[repo] = { sha: sha, branch: branch || state.githubBranch || 'main', updated: new Date().toISOString() };
+      await writeFolioSync(data);
+    }
+
+    // 差分 Pull の基準となる SHA を解決
+    // 優先順位: localStorage → Drive(.folio/sync.json) → Drive(.git/refs)
     async function resolveBaseSha(repo, repoFolderName, branch) {
       const saved = getSavedPullSha(repo);
       if (saved) return saved;
-      // localStorage に無い場合は Drive 側の .git/refs を読む
+
+      // .folio/sync.json から読む
+      try {
+        const folio = await readFolioSync();
+        const entry = folio.repos && folio.repos[repo];
+        if (entry && entry.sha && /^[0-9a-f]{40}$/i.test(entry.sha)) {
+          savePullSha(repo, entry.sha); // キャッシュ
+          return entry.sha;
+        }
+      } catch (e) { /* fallthrough */ }
+
+      // レガシーの .git/refs フォールバック
       const fromDrive = await readDriveOriginSha(repoFolderName, branch);
       if (fromDrive) {
-        // 以降は localStorage 経由で高速化
         savePullSha(repo, fromDrive);
         return fromDrive;
       }
@@ -2649,7 +2768,7 @@
             if (lastSha === headSha) { skipped++; continue; } // 変更なし
             const changed = await getChangedFiles(repo, lastSha, state.githubBranch);
             if (changed !== null) {
-              if (changed.length === 0) { savePullSha(repo, headSha); continue; }
+              if (changed.length === 0) { await saveSyncShaToDrive(repo, headSha, state.githubBranch); continue; }
               for (const cf of changed) {
                 try {
                   if (cf.status === 'removed') continue; // 削除はスキップ（Drive側は手動管理）
@@ -2670,7 +2789,7 @@
                   }
                 } catch (e) { errors++; }
               }
-              savePullSha(repo, headSha);
+              await saveSyncShaToDrive(repo, headSha, state.githubBranch);
               continue;
             }
             // Compare API 失敗時はフルPullにフォールバック
@@ -2726,7 +2845,7 @@
               }
             } catch (e) { errors++; }
           }
-          savePullSha(repo, headSha);
+          await saveSyncShaToDrive(repo, headSha, state.githubBranch);
         } catch (e) { errors++; }
       }
 
@@ -2757,8 +2876,9 @@
       try {
         const sha = await getLatestCommitSha(repo, state.githubBranch);
         if (!sha) throw new Error('HEAD SHA 取得失敗');
-        savePullSha(repo, sha);
-        // Drive 側の .git/refs も（あれば）更新しておく
+        // Drive の .folio/sync.json + localStorage に保存（端末を跨いで共有される）
+        await saveSyncShaToDrive(repo, sha, state.githubBranch);
+        // 加えて Drive 側の .git/refs も（あれば）更新しておく
         if (state.gdriveToken) {
           try { await syncGitRefsAfterPull(folder, repo); } catch (e) {}
         }
@@ -2832,7 +2952,7 @@
 
           if (changed !== null) {
             if (changed.length === 0) {
-              savePullSha(repo, headSha);
+              await saveSyncShaToDrive(repo, headSha, state.githubBranch);
               btn.innerHTML = origText;
               btn.disabled = false;
               showToast(repo + ': 変更なし（最新です）', 'info');
@@ -2887,7 +3007,7 @@
               } catch (e) { errors++; }
             }
 
-            savePullSha(repo, headSha);
+            await saveSyncShaToDrive(repo, headSha, state.githubBranch);
             await syncGitRefsAfterPull(folder, repo);
             btn.innerHTML = origText;
             btn.disabled = false;
@@ -2974,7 +3094,7 @@
         for (let i = 0; i < CONCURRENCY; i++) workers.push(worker());
         await Promise.all(workers);
 
-        savePullSha(repo, headSha);
+        await saveSyncShaToDrive(repo, headSha, state.githubBranch);
       } catch (e) {
         showToast('Pull エラー: ' + e.message, 'error');
         btn.innerHTML = origText;
