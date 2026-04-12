@@ -2021,6 +2021,13 @@
         label.style.cssText = 'flex:1;font-size:14px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
         label.textContent = repo + ' → ' + folder;
 
+        const markBtn = document.createElement('button');
+        markBtn.className = 'btn btn-secondary';
+        markBtn.style.cssText = 'font-size:12px;flex-shrink:0;padding:6px 10px;';
+        markBtn.title = 'Drive は既に GitHub と同期済みとみなし、HEAD SHA だけ保存します。以降の Pull は差分のみ。';
+        markBtn.textContent = '同期済みマーク';
+        markBtn.onclick = () => markRepoAsSynced(folder, repo, markBtn);
+
         const btn = document.createElement('button');
         btn.className = 'btn btn-info';
         btn.style.cssText = 'font-size:12px;flex-shrink:0;padding:6px 12px;';
@@ -2028,6 +2035,7 @@
         btn.onclick = () => pullSingleRepo(folder, repo, btn);
 
         row.appendChild(label);
+        row.appendChild(markBtn);
         row.appendChild(btn);
         list.appendChild(row);
       }
@@ -2734,6 +2742,32 @@
       showToast(msg, (updated > 0 || created > 0) ? 'success' : 'info');
       // ファイル一覧を再取得
       if (updated > 0 || created > 0) refreshFiles();
+    }
+
+    // ============================================================
+    // 「同期済みとしてマーク」
+    // Drive は既に GitHub と同期済みとみなし、HEAD SHA だけ localStorage に保存。
+    // ファイル転送は一切しない。以降の Pull は Compare API で差分のみ。
+    // ============================================================
+    async function markRepoAsSynced(folder, repo, btn) {
+      if (!state.githubToken) { showToast('GitHub が未接続です', 'error'); return; }
+      const origText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '処理中...';
+      try {
+        const sha = await getLatestCommitSha(repo, state.githubBranch);
+        if (!sha) throw new Error('HEAD SHA 取得失敗');
+        savePullSha(repo, sha);
+        // Drive 側の .git/refs も（あれば）更新しておく
+        if (state.gdriveToken) {
+          try { await syncGitRefsAfterPull(folder, repo); } catch (e) {}
+        }
+        showToast(repo + ': 同期済みとしてマーク（' + sha.substring(0, 7) + '）', 'success');
+      } catch (e) {
+        showToast('失敗: ' + e.message, 'error');
+      }
+      btn.disabled = false;
+      btn.textContent = origText;
     }
 
     // ============================================================
