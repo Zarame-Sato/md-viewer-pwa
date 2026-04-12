@@ -2897,22 +2897,29 @@
           await ensureDriveFolderPath(folderPath.split('/'), topFolderId, folderMap, createdFolderCache);
         }
 
-        // 1 ファイルを処理する関数（初回フル Pull：存在すればスキップ、無ければアップ）
+        // 1 ファイルを処理する関数（初回フル Pull：存在すれば上書き、無ければ新規作成）
+        // 中身が違う可能性があるので必ず GitHub から取得して Drive に反映する
         let processed = 0;
         async function processOne(ghFile) {
           try {
             const drivePath = (folder + '/' + ghFile.path).normalize('NFC');
             const driveFile = driveFilesByPath.get(drivePath);
-            if (driveFile) { skipped++; return; } // 既存ファイルは初回は信頼してスキップ
 
-            const pathSegments = ghFile.path.split('/');
-            const fileName = pathSegments.pop();
-            let parentFolderId = topFolderId;
-            if (pathSegments.length > 0) {
-              parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
+            if (driveFile) {
+              // 既存ファイルは上書き
+              const ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, driveFile.id, null, null);
+              if (ok) updated++; else errors++;
+            } else {
+              // 新規作成
+              const pathSegments = ghFile.path.split('/');
+              const fileName = pathSegments.pop();
+              let parentFolderId = topFolderId;
+              if (pathSegments.length > 0) {
+                parentFolderId = await ensureDriveFolderPath(pathSegments, topFolderId, folderMap, createdFolderCache);
+              }
+              const ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, null, parentFolderId, fileName);
+              if (ok) created++; else errors++;
             }
-            const ok = await fetchGitHubAndUploadToDrive(repo, ghFile.path, null, parentFolderId, fileName);
-            if (ok) created++; else errors++;
           } catch (e) { errors++; }
           finally {
             processed++;
