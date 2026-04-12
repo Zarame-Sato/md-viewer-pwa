@@ -2169,6 +2169,14 @@
       }
       if (!state.currentFile) return;
 
+      // バイナリ（pdf/image/other）は Drive から取り直す可能性があるので gdrive トークンが必要
+      var pushFt = getFileType(state.currentFile.name);
+      var pushIsBinary = (pushFt === 'pdf' || pushFt === 'image' || pushFt === 'other');
+      if (pushIsBinary && !state.gdriveToken) {
+        showToast('Google Drive に再接続してください（バイナリ取得に必要）', 'error');
+        return;
+      }
+
       // drivePath からリポジトリと相対パスを解決
       const resolved = resolveRepoAndPath(state.currentFile);
       if (!resolved) {
@@ -2199,10 +2207,6 @@
       } catch (e) { /* ネットワークエラー時は push 処理側でキャッチ */ }
 
       try {
-        const content = state.isEditing
-          ? document.getElementById('editor-content').value
-          : state.currentContent;
-
         // NFC正規化（macOSのNFD形式 → GitHubのNFC形式に統一。重複ディレクトリ防止）
         const nfcPath = filePath.normalize('NFC');
 
@@ -2221,10 +2225,44 @@
           }
         } catch (e) { /* 新規ファイルの場合は SHA 不要 */ }
 
-        // 2. ファイルを commit & push（コミットメッセージは日本語）
+        // 2. コンテンツを base64 化
+        //   - テキスト: state.currentContent（編集中はエディタの値）を UTF-8 で
+        //   - バイナリ(pdf/image/other): タブ内の ArrayBuffer を優先、なければ Drive から再取得
+        let base64Content;
+        if (pushIsBinary) {
+          const activeTab = state.openTabs[state.activeTabIndex];
+          let buffer = null;
+          if (pushFt === 'pdf' && activeTab && activeTab.pdfData) {
+            buffer = activeTab.pdfData;
+          } else {
+            const dres = await fetch(
+              'https://www.googleapis.com/drive/v3/files/' + state.currentFile.id + '?alt=media',
+              { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+            );
+            if (!dres.ok) throw new Error('Drive からのバイナリ取得失敗: ' + dres.status);
+            buffer = await dres.arrayBuffer();
+          }
+          if (!buffer || buffer.byteLength === 0) {
+            throw new Error('バイナリが空です（Drive 側のファイルが空、または Drive 再接続が必要）');
+          }
+          base64Content = arrayBufferToBase64(buffer);
+        } else {
+          const content = state.isEditing
+            ? document.getElementById('editor-content').value
+            : state.currentContent;
+          base64Content = btoa(unescape(encodeURIComponent(content)));
+        }
+
+        // サイズガード: GitHub Contents API の実用上限付近で止める
+        // base64 は元バイナリの約 4/3 倍。元データ 25MB 相当で警告
+        if (base64Content.length > Math.floor(25 * 1024 * 1024 * 4 / 3)) {
+          throw new Error('ファイルが大きすぎます（GitHub Contents API の上限超過）');
+        }
+
+        // 3. ファイルを commit & push（コミットメッセージは日本語）
         const body = {
           message: state.currentFile.name + ' を Folio PWA から更新',
-          content: btoa(unescape(encodeURIComponent(content))),
+          content: base64Content,
           branch: state.githubBranch
         };
         if (sha) body.sha = sha;
@@ -4507,6 +4545,17 @@
       const div = document.createElement('div');
       div.textContent = str;
       return div.innerHTML;
+    }
+
+    // ArrayBuffer → Base64（大きなバイナリでもスタックオーバーフローしないよう 32KB ずつ処理）
+    function arrayBufferToBase64(buffer) {
+      var bytes = new Uint8Array(buffer);
+      var CHUNK = 0x8000; // 32KB
+      var binary = '';
+      for (var i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+      }
+      return btoa(binary);
     }
 
     // ファイルタイプ判定ヘルパー（全箇所でこれを使う）
