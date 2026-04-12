@@ -2480,6 +2480,41 @@
       } catch (e) { /* 容量超過時は無視 */ }
     }
 
+    // Drive 上の .git/refs/remotes/origin/{branch} から現在のコミット SHA を読む
+    // localStorage に SHA が無い初回でも、過去に Pull した記録が Drive に残っていれば差分 Pull が可能
+    async function readDriveOriginSha(repoFolderName, branch) {
+      try {
+        const rootId = state.gdriveFolderId || null;
+        if (!rootId) return null;
+        const repoFolderId = await findDriveFileByPath(rootId, [repoFolderName]);
+        if (!repoFolderId) return null;
+        const refFileId = await findDriveFileByPath(repoFolderId, ['.git', 'refs', 'remotes', 'origin', branch]);
+        if (!refFileId) return null;
+        const res = await fetch(
+          'https://www.googleapis.com/drive/v3/files/' + refFileId + '?alt=media',
+          { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+        );
+        if (!res.ok) return null;
+        const text = (await res.text()).trim();
+        // 40桁の SHA-1 か確認
+        return /^[0-9a-f]{40}$/i.test(text) ? text : null;
+      } catch (e) { return null; }
+    }
+
+    // 差分 Pull の基準となる SHA を解決（localStorage → Drive の順に参照）
+    async function resolveBaseSha(repo, repoFolderName, branch) {
+      const saved = getSavedPullSha(repo);
+      if (saved) return saved;
+      // localStorage に無い場合は Drive 側の .git/refs を読む
+      const fromDrive = await readDriveOriginSha(repoFolderName, branch);
+      if (fromDrive) {
+        // 以降は localStorage 経由で高速化
+        savePullSha(repo, fromDrive);
+        return fromDrive;
+      }
+      return null;
+    }
+
     // GitHub Compare API で差分ファイルを取得（ページネーション対応）
     async function getChangedFiles(repo, baseSha, headBranch) {
       const changedFiles = [];
@@ -2567,7 +2602,8 @@
           const headSha = await getLatestCommitSha(repo, state.githubBranch);
           if (!headSha) { errors++; continue; }
 
-          const lastSha = getSavedPullSha(repo);
+          // 基準 SHA を localStorage→Drive の順で解決
+          const lastSha = await resolveBaseSha(repo, folder, state.githubBranch);
 
           // ── 差分 Pull（前回 SHA がある場合）──
           if (lastSha) {
@@ -2714,7 +2750,8 @@
         const headSha = await getLatestCommitSha(repo, state.githubBranch);
         if (!headSha) throw new Error('GitHub のコミット SHA 取得に失敗');
 
-        const lastSha = getSavedPullSha(repo);
+        // 基準 SHA を localStorage→Drive の順で解決
+        const lastSha = await resolveBaseSha(repo, folder, state.githubBranch);
 
         // ── 差分 Pull（前回 SHA がある場合）──
         if (lastSha) {
