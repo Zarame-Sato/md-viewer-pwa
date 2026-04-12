@@ -3709,7 +3709,9 @@
       try {
         // pdf.js の読み込み完了を待つ
         await window.pdfjsReady;
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        // pdf.js は渡された ArrayBuffer を Worker に transfer して detach する。
+        // 元のバッファは push や再描画で再利用したいので、コピーを渡す。
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
         const totalPages = pdf.numPages;
 
         viewer.innerHTML = '<div class="pdf-viewer"></div>';
