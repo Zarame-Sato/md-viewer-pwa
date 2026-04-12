@@ -2230,21 +2230,54 @@
         //   - バイナリ(pdf/image/other): タブ内の ArrayBuffer を優先、なければ Drive から再取得
         let base64Content;
         if (pushIsBinary) {
-          const activeTab = state.openTabs[state.activeTabIndex];
+          const activeTab = (state.activeTabIndex >= 0) ? state.openTabs[state.activeTabIndex] : null;
           let buffer = null;
-          if (pushFt === 'pdf' && activeTab && activeTab.pdfData) {
+          let source = '';
+
+          // 1) タブにキャッシュされた PDF ArrayBuffer があり、中身が空でなければそれを使う
+          if (pushFt === 'pdf' && activeTab && activeTab.pdfData && activeTab.pdfData.byteLength > 0) {
             buffer = activeTab.pdfData;
+            source = 'tab-cache';
           } else {
+            source = 'drive-api';
+
+            // 2) Drive ショートカット（iPad で「マイドライブに追加」した際に作られがち）を解決
+            let fetchId = state.currentFile.id;
+            let diagMime = state.currentFile.mimeType || '';
+            try {
+              const metaRes = await fetch(
+                'https://www.googleapis.com/drive/v3/files/' + state.currentFile.id + '?fields=mimeType,size,shortcutDetails',
+                { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+              );
+              if (metaRes.ok) {
+                const meta = await metaRes.json();
+                diagMime = meta.mimeType || diagMime;
+                if (meta.mimeType === 'application/vnd.google-apps.shortcut'
+                    && meta.shortcutDetails && meta.shortcutDetails.targetId) {
+                  fetchId = meta.shortcutDetails.targetId;
+                  source = 'drive-api (shortcut→target)';
+                }
+              }
+            } catch (e) { /* メタ取得失敗は無視して素直に alt=media を試す */ }
+
             const dres = await fetch(
-              'https://www.googleapis.com/drive/v3/files/' + state.currentFile.id + '?alt=media',
+              'https://www.googleapis.com/drive/v3/files/' + fetchId + '?alt=media',
               { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
             );
-            if (!dres.ok) throw new Error('Drive からのバイナリ取得失敗: ' + dres.status);
+            if (!dres.ok) {
+              const errTxt = await dres.text().catch(() => '');
+              throw new Error('Drive 取得失敗: ' + dres.status + ' ' + errTxt.slice(0, 200)
+                + ' [mime=' + diagMime + ', id=' + fetchId + ']');
+            }
             buffer = await dres.arrayBuffer();
           }
+
           if (!buffer || buffer.byteLength === 0) {
-            throw new Error('バイナリが空です（Drive 側のファイルが空、または Drive 再接続が必要）');
+            throw new Error('バイナリが空です [source=' + source
+              + ', mime=' + (state.currentFile.mimeType || '?')
+              + ', fileId=' + state.currentFile.id + ']');
           }
+          console.log('[push] binary source=' + source + ', bytes=' + buffer.byteLength);
           base64Content = arrayBufferToBase64(buffer);
         } else {
           const content = state.isEditing
