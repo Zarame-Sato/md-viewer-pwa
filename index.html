@@ -796,8 +796,8 @@
     .html-preview-wrap {
       display: flex;
       flex-direction: column;
-      height: calc(100dvh - 200px);
-      min-height: 320px;
+      height: calc(100dvh - 260px);
+      min-height: 280px;
       border: 1px solid var(--border);
       border-radius: var(--radius);
       overflow: hidden;
@@ -834,6 +834,8 @@
       cursor: pointer;
     }
     .html-preview-bar button:hover { color: var(--text); border-color: var(--border-glow); }
+    .html-preview-bar button:disabled { opacity: 0.3; cursor: default; }
+    .html-preview-bar button:disabled:hover { color: var(--text-secondary); border-color: var(--border); }
     .html-preview-frame {
       flex: 1;
       width: 100%;
@@ -846,7 +848,7 @@
       position: fixed;
       inset: 0;
       z-index: 9999;
-      height: 100dvh;
+      height: 100dvh !important;
       min-height: 0;
       margin: 0;
       border: 0;
@@ -3869,33 +3871,103 @@
     //    スクリプトから親アプリ（Drive トークン等）へは一切触れない
     // ============================================================
 
-    // sandbox（allow-same-origin なし）では localStorage 参照が例外を投げる。
-    // 多くのページが素で触るので、メモリ実装に差し替えて落ちないようにする。
-    var HTML_PREVIEW_SHIM = [
-      '(function(){',
-      '  function mk(){',
-      '    var m = {};',
-      '    return {',
-      '      getItem: function(k){ k = String(k); return Object.prototype.hasOwnProperty.call(m, k) ? m[k] : null; },',
-      '      setItem: function(k, v){ m[String(k)] = String(v); },',
-      '      removeItem: function(k){ delete m[String(k)]; },',
-      '      clear: function(){ m = {}; },',
-      '      key: function(i){ var ks = Object.keys(m); return i < ks.length ? ks[i] : null; },',
-      '      get length(){ return Object.keys(m).length; }',
-      '    };',
-      '  }',
-      '  ["localStorage", "sessionStorage"].forEach(function(name){',
-      '    var ok = false;',
-      '    try { window[name].getItem("__folio_probe__"); ok = true; } catch (e) { ok = false; }',
-      '    if (!ok) { try { Object.defineProperty(window, name, { value: mk(), configurable: true }); } catch (e2) {} }',
-      '  });',
-      '})();'
-    ].join('\n');
+    // iframe に注入するシム。
+    //  ① sandbox（allow-same-origin なし）では localStorage 参照が例外を投げる。
+    //     多くのページが素で触るので、メモリ実装に差し替えて落ちないようにする。
+    //  ② 相対リンクのクリックを親アプリに転送し、Drive 上の次ページへ遷移させる。
+    //  ③ ページ内アンカー（#id）は srcdoc だと既定動作が効かないので自前でスクロールする。
+    function buildHtmlPreviewShim(hash) {
+      return [
+        '(function(){',
+        '  var HASH = ' + JSON.stringify(hash || '') + ';',
+        '',
+        '  // --- ① storage シム ---',
+        '  function mk(){',
+        '    var m = {};',
+        '    return {',
+        '      getItem: function(k){ k = String(k); return Object.prototype.hasOwnProperty.call(m, k) ? m[k] : null; },',
+        '      setItem: function(k, v){ m[String(k)] = String(v); },',
+        '      removeItem: function(k){ delete m[String(k)]; },',
+        '      clear: function(){ m = {}; },',
+        '      key: function(i){ var ks = Object.keys(m); return i < ks.length ? ks[i] : null; },',
+        '      get length(){ return Object.keys(m).length; }',
+        '    };',
+        '  }',
+        '  ["localStorage", "sessionStorage"].forEach(function(name){',
+        '    var ok = false;',
+        '    try { window[name].getItem("__folio_probe__"); ok = true; } catch (e) { ok = false; }',
+        '    if (!ok) { try { Object.defineProperty(window, name, { value: mk(), configurable: true }); } catch (e2) {} }',
+        '  });',
+        '',
+        '  // --- ②③ リンククリックの横取り ---',
+        '  function findAnchor(node){',
+        '    while (node && node !== document) {',
+        '      if (node.nodeType === 1 && node.tagName && node.tagName.toLowerCase() === "a") return node;',
+        '      node = node.parentNode || (node.getRootNode && node.getRootNode().host);',
+        '    }',
+        '    return null;',
+        '  }',
+        '  function scrollToId(id){',
+        '    if (!id) return false;',
+        '    var el = null;',
+        '    try { el = document.getElementById(id) || document.getElementsByName(id)[0]; } catch (e) {}',
+        '    if (!el) return false;',
+        '    try { el.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) { el.scrollIntoView(); }',
+        '    return true;',
+        '  }',
+        '  document.addEventListener("click", function(e){',
+        '    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;',
+        '    var a = findAnchor(e.target);',
+        '    if (!a || a.hasAttribute("download")) return;',
+        '    var href = a.getAttribute("href");',
+        '    if (!href) return;',
+        '    href = href.trim();',
+        '    if (!href) return;',
+        '    // ページ内アンカー',
+        '    if (href.charAt(0) === "#") {',
+        '      e.preventDefault();',
+        '      scrollToId(decodeURIComponent(href.slice(1)));',
+        '      return;',
+        '    }',
+        '    // 外部URL・data: など → iframe 内でそのまま遷移させる',
+        '    if (/^(?:[a-z][a-z0-9+.\\-]*:|\\/\\/)/i.test(href)) return;',
+        '    // 相対リンク → 親アプリに解決を依頼',
+        '    e.preventDefault();',
+        '    try { parent.postMessage({ __folioNav: true, href: href }, "*"); } catch (err) {}',
+        '  }, true);',
+        '',
+        '  // --- ③ 遷移直後のハッシュへスクロール ---',
+        '  if (HASH) {',
+        '    var go = function(){ if (!scrollToId(HASH)) setTimeout(function(){ scrollToId(HASH); }, 300); };',
+        '    if (document.readyState === "complete") go();',
+        '    else window.addEventListener("load", go);',
+        '  }',
+        '})();'
+      ].join('\n');
+    }
+
+    // プレビュー枠の高さを実測で合わせる。
+    // ビューアは body スクロールなので、固定 calc だとツールバーが
+    // sticky ヘッダーの下に隠れてしまう。画面に収まる高さを都度計算する。
+    function sizeHtmlPreview(wrap) {
+      wrap = wrap || document.querySelector('.html-preview-wrap');
+      if (!wrap || wrap.classList.contains('fullscreen')) return;
+      wrap.style.height = '';
+      var docTop = wrap.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0);
+      var nav = document.querySelector('nav');
+      var navH = nav ? nav.getBoundingClientRect().height : 0;
+      var h = window.innerHeight - docTop - navH - 8;
+      wrap.style.height = Math.max(280, Math.round(h)) + 'px';
+    }
+    window.addEventListener('resize', function() { sizeHtmlPreview(); });
+    window.addEventListener('orientationchange', function() {
+      setTimeout(function() { sizeHtmlPreview(); }, 300);
+    });
 
     // 全画面プレビューを閉じる（画面遷移・タブ切替時に呼ぶ）
     function exitHtmlPreviewFullscreen() {
       var fs = document.querySelector('.html-preview-wrap.fullscreen');
-      if (fs) fs.classList.remove('fullscreen');
+      if (fs) { fs.classList.remove('fullscreen'); sizeHtmlPreview(fs); }
       if (document.body.style.overflow === 'hidden') document.body.style.overflow = '';
     }
 
@@ -3977,7 +4049,7 @@
     }
 
     // 相対参照を実体で埋めた、単体で完結する HTML を組み立てる
-    async function htmlPreviewInline(source, file) {
+    async function htmlPreviewInline(source, file, hash) {
       var result = { html: source, resolved: 0, missing: [] };
 
       var doc;
@@ -4126,10 +4198,10 @@
         }
       }
 
-      // localStorage シムを先頭に差し込む
+      // storage シム + リンク遷移シムを先頭に差し込む
       try {
         var shim = doc.createElement('script');
-        shim.textContent = HTML_PREVIEW_SHIM;
+        shim.textContent = buildHtmlPreviewShim(hash);
         var head = doc.head || doc.documentElement;
         head.insertBefore(shim, head.firstChild);
       } catch (e) { /* 差し込めなくても描画は続行 */ }
@@ -4139,27 +4211,32 @@
     }
 
     // HTML ファイルをプレビュー描画（renderByType から呼ばれる）
-    function renderHtmlPreview(content, file) {
+    function renderHtmlPreview(content, file, opts) {
+      opts = opts || {};
       var viewer = document.getElementById('viewer-content');
       var target = file || state.currentFile;
       var seq = ++htmlPreviewSeq;
 
       viewer.innerHTML = '<div class="loading"><div class="spinner"></div>HTML を描画中...</div>';
 
-      htmlPreviewInline(content, target).then(function(res) {
+      htmlPreviewInline(content, target, opts.hash).then(function(res) {
         if (seq !== htmlPreviewSeq) return; // 別ファイルに切り替わっていた
-        mountHtmlPreview(res.html, content, res.resolved, res.missing);
+        mountHtmlPreview(res.html, res.resolved, res.missing, target);
       }).catch(function(err) {
         if (seq !== htmlPreviewSeq) return;
         // 相対参照の解決に失敗しても、素の HTML はそのまま出す
-        mountHtmlPreview(content, content, 0, [String(err && err.message || err)]);
+        mountHtmlPreview(content, 0, [String(err && err.message || err)], target);
       });
     }
 
     // プレビュー UI（ツールバー + sandbox iframe）を組み立てて表示
-    function mountHtmlPreview(html, rawSource, resolvedCount, missing) {
+    function mountHtmlPreview(html, resolvedCount, missing, pageFile) {
       var viewer = document.getElementById('viewer-content');
       viewer.innerHTML = '';
+
+      var tab = state.openTabs[state.activeTabIndex];
+      var backLen = (tab && tab.navBack) ? tab.navBack.length : 0;
+      var fwdLen = (tab && tab.navFwd) ? tab.navFwd.length : 0;
 
       var wrap = document.createElement('div');
       wrap.className = 'html-preview-wrap';
@@ -4167,15 +4244,31 @@
       var bar = document.createElement('div');
       bar.className = 'html-preview-bar';
 
+      function addButton(label, title, onClick, disabled) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = label;
+        b.title = title;
+        if (disabled) b.disabled = true;
+        else b.addEventListener('click', onClick);
+        bar.appendChild(b);
+        return b;
+      }
+
+      // ページ間リンクの履歴
+      addButton('◀', '前のページに戻る', htmlPreviewGoBack, backLen === 0);
+      addButton('▶', '次のページに進む', htmlPreviewGoForward, fwdLen === 0);
+
       var info = document.createElement('span');
       info.className = 'html-preview-info';
-      var msg = 'ブラウザ表示';
-      if (resolvedCount) msg += ' ・ 関連ファイル ' + resolvedCount + ' 件を埋め込み';
+      var msg = (pageFile && pageFile.name) ? pageFile.name : 'ブラウザ表示';
       if (missing && missing.length) {
         msg += ' ・ 未解決 ' + missing.length + ' 件';
-        info.title = 'Drive 上で見つからなかった参照:\n' + missing.join('\n');
       }
       info.textContent = msg;
+      info.title = (pageFile && (pageFile.drivePath || pageFile.name) || '') +
+        (resolvedCount ? '\n関連ファイル ' + resolvedCount + ' 件を埋め込み済み' : '') +
+        ((missing && missing.length) ? '\nDrive 上で見つからなかった参照:\n' + missing.join('\n') : '');
       bar.appendChild(info);
 
       var frame = document.createElement('iframe');
@@ -4185,19 +4278,12 @@
       frame.setAttribute('referrerpolicy', 'no-referrer');
       frame.setAttribute('title', 'HTML プレビュー');
 
-      var reloadBtn = document.createElement('button');
-      reloadBtn.type = 'button';
-      reloadBtn.textContent = '⟳ 再読込';
-      reloadBtn.addEventListener('click', function() {
+      addButton('⟳', '再読込', function() {
         frame.srcdoc = '';
         frame.srcdoc = html;
       });
-      bar.appendChild(reloadBtn);
 
-      var openBtn = document.createElement('button');
-      openBtn.type = 'button';
-      openBtn.textContent = '↗ 別タブ';
-      openBtn.addEventListener('click', function() {
+      addButton('↗', '別タブで開く', function() {
         try {
           var blob = new Blob([html], { type: 'text/html' });
           var url = URL.createObjectURL(blob);
@@ -4208,17 +4294,14 @@
           showToast('別タブで開けませんでした: ' + e.message, 'error');
         }
       });
-      bar.appendChild(openBtn);
 
-      var fsBtn = document.createElement('button');
-      fsBtn.type = 'button';
-      fsBtn.textContent = '⛶ 全画面';
-      fsBtn.addEventListener('click', function() {
+      var fsBtn = addButton('⛶', '全画面表示', function() {
         var on = wrap.classList.toggle('fullscreen');
-        fsBtn.textContent = on ? '✕ 閉じる' : '⛶ 全画面';
+        fsBtn.textContent = on ? '✕' : '⛶';
+        fsBtn.title = on ? '全画面を閉じる' : '全画面表示';
         document.body.style.overflow = on ? 'hidden' : '';
+        if (on) wrap.style.height = ''; else sizeHtmlPreview(wrap);
       });
-      bar.appendChild(fsBtn);
 
       wrap.appendChild(bar);
       wrap.appendChild(frame);
@@ -4226,7 +4309,134 @@
 
       // iframe を DOM に入れてから srcdoc を設定する（Safari で描画が抜けるのを防ぐ）
       frame.srcdoc = html;
+      sizeHtmlPreview(wrap);
     }
+
+    // ============================================================
+    // プレビュー内のページ間リンク遷移
+    //  iframe から postMessage で受け取った相対リンクを Drive 上の
+    //  ファイルに解決し、同じタブのまま次のページを描画する。
+    //  タブの対象ファイルも差し替えるので、編集・保存・Push は
+    //  「いま見ているページ」に対して働く。
+    // ============================================================
+
+    // リンク先の候補を順に試す（拡張子なし・ディレクトリ指定にも対応）
+    function htmlPreviewResolveLink(baseDir, rel) {
+      var clean = String(rel).replace(/\/+$/, '');
+      var candidates = [rel];
+      if (/\/$/.test(rel) || !/\.[a-z0-9]+$/i.test(clean)) {
+        candidates.push(clean + '.html', clean + '.htm',
+                        clean + '/index.html', clean + '/index.htm');
+      }
+      for (var i = 0; i < candidates.length; i++) {
+        if (!candidates[i]) continue;
+        var path = htmlPreviewResolvePath(baseDir, candidates[i]);
+        var f = path && htmlPreviewFindFile(path);
+        if (f) return f;
+      }
+      return null;
+    }
+
+    // 画面とタブの対象ファイルを次のページに差し替えて再描画
+    function htmlPreviewShowPage(file, content, hash) {
+      state.currentFile = file;
+      state.currentContent = content;
+      var tab = state.openTabs[state.activeTabIndex];
+      if (tab) {
+        tab.file = file;
+        tab.content = content;
+        tab.renderedHtml = null;
+        tab.isEditing = false;
+      }
+      state.isEditing = false;
+      document.getElementById('viewer-title').textContent = file.name;
+      document.getElementById('edit-tabs').style.display = 'none';
+      document.getElementById('editor-content').style.display = 'none';
+      document.getElementById('viewer-content').style.display = 'block';
+      var btn = document.getElementById('btn-edit');
+      if (btn) btn.innerHTML = ICON_EDIT + getEditLabel(getFileType(file.name));
+      renderFileTabs();
+      renderHtmlPreview(content, file, { hash: hash });
+    }
+
+    async function htmlPreviewNavigate(href) {
+      var cur = state.currentFile;
+      if (!cur) return;
+
+      var raw = String(href);
+      var hash = '';
+      var hi = raw.indexOf('#');
+      if (hi >= 0) { hash = raw.slice(hi + 1); raw = raw.slice(0, hi); }
+      try { hash = decodeURIComponent(hash); } catch (e) { /* そのまま */ }
+      raw = raw.split('?')[0];
+      if (!raw) return; // 同一ページのアンカーは iframe 側で処理済み
+
+      var drivePath = cur.drivePath || cur.name || '';
+      var baseDir = drivePath.indexOf('/') >= 0 ? drivePath.slice(0, drivePath.lastIndexOf('/')) : '';
+      var target = htmlPreviewResolveLink(baseDir, raw);
+      if (!target) {
+        showToast('リンク先が Drive に見つかりません: ' + raw, 'error');
+        return;
+      }
+
+      // HTML 以外（PDF・画像・md など）は通常のファイルとして開く
+      if (getFileType(target.name) !== 'html') {
+        var idx = (state.files || []).indexOf(target);
+        if (idx >= 0) { openFile(idx); return; }
+        showToast('このリンクは開けません: ' + target.name, 'error');
+        return;
+      }
+
+      // 同じページへのリンク → ハッシュだけ処理して終わり
+      if (target.id === cur.id) {
+        if (hash) renderHtmlPreview(state.currentContent, cur, { hash: hash });
+        return;
+      }
+
+      var content;
+      try {
+        content = await loadGdriveFileContent(target.id);
+      } catch (e) {
+        showToast('リンク先の読み込みに失敗: ' + e.message, 'error');
+        return;
+      }
+
+      var tab = state.openTabs[state.activeTabIndex];
+      if (tab) {
+        tab.navBack = tab.navBack || [];
+        tab.navBack.push({ file: cur, content: state.currentContent });
+        tab.navFwd = [];
+      }
+      htmlPreviewShowPage(target, content, hash);
+    }
+
+    function htmlPreviewGoBack() {
+      var tab = state.openTabs[state.activeTabIndex];
+      if (!tab || !tab.navBack || !tab.navBack.length) return;
+      var prev = tab.navBack.pop();
+      tab.navFwd = tab.navFwd || [];
+      tab.navFwd.push({ file: state.currentFile, content: state.currentContent });
+      htmlPreviewShowPage(prev.file, prev.content, '');
+    }
+
+    function htmlPreviewGoForward() {
+      var tab = state.openTabs[state.activeTabIndex];
+      if (!tab || !tab.navFwd || !tab.navFwd.length) return;
+      var next = tab.navFwd.pop();
+      tab.navBack = tab.navBack || [];
+      tab.navBack.push({ file: state.currentFile, content: state.currentContent });
+      htmlPreviewShowPage(next.file, next.content, '');
+    }
+
+    // iframe からのリンククリック通知を受ける（allow-same-origin なしなので
+    // origin は "null" になる。送信元 window の一致で検証する）
+    window.addEventListener('message', function(ev) {
+      var d = ev.data;
+      if (!d || d.__folioNav !== true || typeof d.href !== 'string') return;
+      var frame = document.querySelector('.html-preview-frame');
+      if (!frame || ev.source !== frame.contentWindow) return;
+      htmlPreviewNavigate(d.href);
+    });
 
     // ============================================================
     // ファイルタイプ別レンダリング振り分け
@@ -5034,6 +5244,9 @@
       }
       return btoa(binary);
     }
+
+    // 「編集」ボタンのアイコン（ラベル差し替え時に使い回す）
+    var ICON_EDIT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
 
     // 編集/閲覧トグルボタンのラベル（ファイルタイプ別）
     function getEditLabel(ft) {
