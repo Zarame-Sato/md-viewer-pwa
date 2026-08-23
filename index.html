@@ -272,6 +272,7 @@
     .file-icon.py-icon { background: linear-gradient(135deg, #fbbf24, #f59e0b); }
     .file-icon.ipynb-icon { background: linear-gradient(135deg, #f97316, #ea580c); }
     .file-icon.img-icon { background: linear-gradient(135deg, #a78bfa, #7c3aed); }
+    .file-icon.html-icon { background: linear-gradient(135deg, #fb7185, #f43f5e); }
     .file-icon.code-icon { background: linear-gradient(135deg, #38bdf8, #0284c7); }
     .file-icon.other-icon { background: linear-gradient(135deg, #a1a1aa, #71717a); }
     .file-icon.default-icon { background: linear-gradient(135deg, #6c8aff, #8b5cf6); }
@@ -789,6 +790,74 @@
     .file-tab-type.txt { background: rgba(148,163,184,0.15); color: #94a3b8; }
     .file-tab-type.py { background: rgba(251,191,36,0.15); color: #fbbf24; }
     .file-tab-type.ipynb { background: rgba(249,115,22,0.15); color: #fb923c; }
+    .file-tab-type.html { background: rgba(244,63,94,0.15); color: #fb7185; }
+
+    /* ===== HTML プレビュー（ブラウザ同等表示） ===== */
+    .html-preview-wrap {
+      display: flex;
+      flex-direction: column;
+      height: calc(100dvh - 200px);
+      min-height: 320px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: #fff;
+      margin: 8px 0;
+    }
+    .html-preview-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      background: var(--card-bg);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .html-preview-bar .html-preview-info {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .html-preview-bar button {
+      flex-shrink: 0;
+      padding: 4px 9px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .html-preview-bar button:hover { color: var(--text); border-color: var(--border-glow); }
+    .html-preview-frame {
+      flex: 1;
+      width: 100%;
+      border: 0;
+      display: block;
+      background: #fff;
+    }
+    /* 全画面表示 */
+    .html-preview-wrap.fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      height: 100dvh;
+      min-height: 0;
+      margin: 0;
+      border: 0;
+      border-radius: 0;
+    }
+    .html-preview-wrap.fullscreen .html-preview-bar {
+      padding-top: calc(6px + var(--safe-top, 0px));
+    }
+    .html-preview-wrap.fullscreen .html-preview-frame {
+      padding-bottom: var(--safe-bottom, 0px);
+    }
 
     /* ===== IPYNB セル表示 ===== */
     .nb-cell { margin: 8px 16px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
@@ -1343,6 +1412,7 @@
     // ページ切替
     // ============================================================
     function showPage(name) {
+      exitHtmlPreviewFullscreen();
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       document.getElementById('page-' + name).classList.add('active');
       document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
@@ -3478,6 +3548,7 @@
 
     // 現在のタブの編集状態を保存
     function saveCurrentTabState() {
+      exitHtmlPreviewFullscreen();
       if (state.activeTabIndex < 0 || state.activeTabIndex >= state.openTabs.length) return;
       const tab = state.openTabs[state.activeTabIndex];
       tab.isEditing = state.isEditing;
@@ -3486,7 +3557,7 @@
       }
       // 表示中のHTMLも保存（切り替え時の再レンダリングを回避）
       var _ft = getFileType(tab.file.name);
-      if (_ft !== 'pdf' && _ft !== 'image' && _ft !== 'other') {
+      if (_ft !== 'pdf' && _ft !== 'image' && _ft !== 'other' && _ft !== 'html') {
         tab.renderedHtml = document.getElementById('viewer-content').innerHTML;
       }
     }
@@ -3538,8 +3609,8 @@
         renderDownloadLink(tab.file);
       } else {
         // テキスト系ファイル (md/csv/txt/py/ipynb/code)
-        var editLabel = ft === 'csv' ? 'ソース' : '編集';
-        var viewLabel = ft === 'csv' ? 'テーブル' : '閲覧';
+        var editLabel = getEditLabel(ft);
+        var viewLabel = getViewLabel(ft);
         document.getElementById('btn-edit').style.display = '';
         document.getElementById('btn-save-drive').style.display = '';
         if (state.isEditing) {
@@ -3553,7 +3624,7 @@
           editor.style.display = 'none';
           viewer.style.display = 'block';
           document.getElementById('btn-edit').innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' + editLabel;
-          if (tab.renderedHtml && ft !== 'csv') {
+          if (tab.renderedHtml && ft !== 'csv' && ft !== 'html') {
             viewer.innerHTML = tab.renderedHtml;
           } else {
             renderByType(tab.content || '', ft);
@@ -3684,7 +3755,7 @@
         }
 
         // テキスト系ファイル（md / csv / txt / py / ipynb / code）
-        var editLabel = ft === 'csv' ? 'ソース' : '編集';
+        var editLabel = getEditLabel(ft);
         document.getElementById('btn-edit').style.display = '';
         document.getElementById('btn-edit').innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' + editLabel;
         document.getElementById('btn-save-drive').style.display = '';
@@ -3692,7 +3763,7 @@
         state.currentContent = content;
         newTab.content = content;
         renderByType(content, ft);
-        newTab.renderedHtml = document.getElementById('viewer-content').innerHTML;
+        if (ft !== 'html') newTab.renderedHtml = document.getElementById('viewer-content').innerHTML;
       } catch (err) {
         document.getElementById('viewer-content').innerHTML =
           '<div class="empty-state"><div class="icon">⚠️</div><p>読み込みエラー: ' + escapeHtml(err.message) + '</p></div>';
@@ -3788,12 +3859,383 @@
     }
 
     // ============================================================
+    // HTML プレビュー（サンドボックス iframe でブラウザと同じ描画）
+    //
+    //  ・.html / .htm を開くと、既定でレンダリング結果を表示する
+    //  ・「コード」ボタンでソース編集に切替（従来の表示）
+    //  ・同じ Drive フォルダ内の相対参照（css/js/画像/フォント）は
+    //    実体を取得してインライン化・data URI 化してから流し込む
+    //  ・sandbox に allow-same-origin を付けないので、プレビュー側の
+    //    スクリプトから親アプリ（Drive トークン等）へは一切触れない
+    // ============================================================
+
+    // sandbox（allow-same-origin なし）では localStorage 参照が例外を投げる。
+    // 多くのページが素で触るので、メモリ実装に差し替えて落ちないようにする。
+    var HTML_PREVIEW_SHIM = [
+      '(function(){',
+      '  function mk(){',
+      '    var m = {};',
+      '    return {',
+      '      getItem: function(k){ k = String(k); return Object.prototype.hasOwnProperty.call(m, k) ? m[k] : null; },',
+      '      setItem: function(k, v){ m[String(k)] = String(v); },',
+      '      removeItem: function(k){ delete m[String(k)]; },',
+      '      clear: function(){ m = {}; },',
+      '      key: function(i){ var ks = Object.keys(m); return i < ks.length ? ks[i] : null; },',
+      '      get length(){ return Object.keys(m).length; }',
+      '    };',
+      '  }',
+      '  ["localStorage", "sessionStorage"].forEach(function(name){',
+      '    var ok = false;',
+      '    try { window[name].getItem("__folio_probe__"); ok = true; } catch (e) { ok = false; }',
+      '    if (!ok) { try { Object.defineProperty(window, name, { value: mk(), configurable: true }); } catch (e2) {} }',
+      '  });',
+      '})();'
+    ].join('\n');
+
+    // 全画面プレビューを閉じる（画面遷移・タブ切替時に呼ぶ）
+    function exitHtmlPreviewFullscreen() {
+      var fs = document.querySelector('.html-preview-wrap.fullscreen');
+      if (fs) fs.classList.remove('fullscreen');
+      if (document.body.style.overflow === 'hidden') document.body.style.overflow = '';
+    }
+
+    // 描画リクエストの世代番号（別ファイルに切り替わった後の遅延結果を捨てる）
+    var htmlPreviewSeq = 0;
+
+    // 外部URL / data: / blob: / アンカーなど、解決しなくてよいものか
+    function htmlPreviewIsExternal(url) {
+      if (!url) return true;
+      var u = String(url).trim();
+      if (!u) return true;
+      if (u.charAt(0) === '#') return true;
+      return /^(?:[a-z][a-z0-9+.\-]*:|\/\/)/i.test(u);
+    }
+
+    // baseDir を起点に相対パスを正規化して drivePath 形式にする
+    function htmlPreviewResolvePath(baseDir, rel) {
+      var p = String(rel).trim().split('#')[0].split('?')[0];
+      if (!p) return null;
+      try { p = decodeURIComponent(p); } catch (e) { /* そのまま使う */ }
+      if (p.charAt(0) === '/') p = p.slice(1); // ルート相対は HTML と同じ階層を起点にする
+      var parts = baseDir ? baseDir.split('/').filter(Boolean) : [];
+      var segs = p.split('/');
+      for (var i = 0; i < segs.length; i++) {
+        var seg = segs[i];
+        if (!seg || seg === '.') continue;
+        if (seg === '..') { parts.pop(); continue; }
+        parts.push(seg);
+      }
+      return parts.length ? parts.join('/') : null;
+    }
+
+    // drivePath からファイル一覧を引く（完全一致 → 大小無視 → ファイル名一意一致）
+    function htmlPreviewFindFile(path) {
+      if (!path) return null;
+      var files = state.files || [];
+      var i;
+      for (i = 0; i < files.length; i++) {
+        if ((files[i].drivePath || files[i].name) === path) return files[i];
+      }
+      var lower = path.toLowerCase();
+      for (i = 0; i < files.length; i++) {
+        if ((files[i].drivePath || files[i].name || '').toLowerCase() === lower) return files[i];
+      }
+      var base = path.split('/').pop().toLowerCase();
+      var hits = files.filter(function(f) { return (f.name || '').toLowerCase() === base; });
+      return hits.length === 1 ? hits[0] : null;
+    }
+
+    // Drive からバイト列で取得（画像・フォントなどバイナリ用）
+    async function loadGdriveFileBytes(fileId) {
+      if (gapiReady && gapi.client) {
+        gapi.client.setToken({ access_token: state.gdriveToken });
+        var response = await gapi.client.request({
+          path: '/drive/v3/files/' + fileId,
+          params: { alt: 'media' }
+        });
+        var raw = response.body;
+        var bytes = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) & 0xff;
+        return bytes;
+      }
+      var res = await fetch(
+        'https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media',
+        { headers: { Authorization: 'Bearer ' + state.gdriveToken } }
+      );
+      if (!res.ok) throw new Error('Drive 読み込みエラー: ' + res.status);
+      return new Uint8Array(await res.arrayBuffer());
+    }
+
+    // Uint8Array → base64（大きいファイルでスタックが溢れないよう分割）
+    function bytesToBase64(bytes) {
+      var CHUNK = 0x8000;
+      var out = '';
+      for (var i = 0; i < bytes.length; i += CHUNK) {
+        out += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+      }
+      return btoa(out);
+    }
+
+    // 相対参照を実体で埋めた、単体で完結する HTML を組み立てる
+    async function htmlPreviewInline(source, file) {
+      var result = { html: source, resolved: 0, missing: [] };
+
+      var doc;
+      try {
+        doc = new DOMParser().parseFromString(source, 'text/html');
+      } catch (e) { doc = null; }
+      if (!doc || !doc.documentElement) return result;
+
+      var drivePath = (file && (file.drivePath || file.name)) || '';
+      var baseDir = drivePath.indexOf('/') >= 0 ? drivePath.slice(0, drivePath.lastIndexOf('/')) : '';
+
+      // <base href> があるページは作者が解決先を指定済みなので触らない
+      var hasBase = !!doc.querySelector('base[href]');
+
+      var cache = {};      // drivePath → { bytes, mime } | null
+      var missingSet = {};
+
+      function noteMissing(rel) {
+        if (!missingSet[rel]) { missingSet[rel] = true; result.missing.push(rel); }
+      }
+
+      async function getAsset(rel, curDir) {
+        var path = htmlPreviewResolvePath(curDir, rel);
+        if (!path) return null;
+        if (Object.prototype.hasOwnProperty.call(cache, path)) {
+          if (!cache[path]) noteMissing(rel);
+          return cache[path];
+        }
+        var f = htmlPreviewFindFile(path);
+        if (!f) { cache[path] = null; noteMissing(rel); return null; }
+        try {
+          var bytes = await loadGdriveFileBytes(f.id);
+          cache[path] = { bytes: bytes, mime: getFileMime(f.name), dir: path.indexOf('/') >= 0 ? path.slice(0, path.lastIndexOf('/')) : '' };
+          result.resolved++;
+        } catch (e) {
+          cache[path] = null;
+          noteMissing(rel);
+        }
+        return cache[path];
+      }
+
+      async function assetToDataUri(rel, curDir) {
+        var a = await getAsset(rel, curDir);
+        if (!a) return null;
+        return 'data:' + a.mime + ';base64,' + bytesToBase64(a.bytes);
+      }
+
+      async function assetToText(rel, curDir) {
+        var a = await getAsset(rel, curDir);
+        if (!a) return null;
+        return { text: new TextDecoder('utf-8').decode(a.bytes), dir: a.dir };
+      }
+
+      // CSS 内の url(...) / @import を data URI に置き換える
+      async function rewriteCss(css, curDir) {
+        var urlRe = /url\(\s*(['"]?)([^'")]+)\1\s*\)/gi;
+        var importRe = /@import\s+(['"])([^'"]+)\1/gi;
+        var targets = [];
+        var m;
+        while ((m = urlRe.exec(css)) !== null) targets.push(m[2]);
+        while ((m = importRe.exec(css)) !== null) targets.push(m[2]);
+
+        var map = {};
+        for (var i = 0; i < targets.length; i++) {
+          var u = targets[i];
+          if (Object.prototype.hasOwnProperty.call(map, u) || htmlPreviewIsExternal(u)) continue;
+          map[u] = await assetToDataUri(u, curDir);
+        }
+        return css
+          .replace(urlRe, function(full, q, u) { return map[u] ? 'url(' + q + map[u] + q + ')' : full; })
+          .replace(importRe, function(full, q, u) { return map[u] ? '@import ' + q + map[u] + q : full; });
+      }
+
+      if (!hasBase) {
+        var i, el, list;
+
+        // 1. <link rel="stylesheet"> → <style> に展開
+        list = Array.prototype.slice.call(doc.querySelectorAll('link[href]'));
+        for (i = 0; i < list.length; i++) {
+          el = list[i];
+          var rel = (el.getAttribute('rel') || '').toLowerCase();
+          var href = el.getAttribute('href');
+          if (rel.indexOf('stylesheet') < 0 || htmlPreviewIsExternal(href)) continue;
+          var css = await assetToText(href, baseDir);
+          if (!css) continue;
+          var styleEl = doc.createElement('style');
+          styleEl.textContent = await rewriteCss(css.text, css.dir);
+          el.parentNode.replaceChild(styleEl, el);
+        }
+
+        // 2. <script src> → 中身をインライン化
+        list = Array.prototype.slice.call(doc.querySelectorAll('script[src]'));
+        for (i = 0; i < list.length; i++) {
+          el = list[i];
+          var src = el.getAttribute('src');
+          if (htmlPreviewIsExternal(src)) continue;
+          var js = await assetToText(src, baseDir);
+          if (!js) continue;
+          el.removeAttribute('src');
+          el.textContent = js.text;
+        }
+
+        // 3. 画像・メディア類 → data URI
+        var mediaSel = 'img[src], source[src], video[src], video[poster], audio[src], embed[src], object[data], input[type="image"][src]';
+        list = Array.prototype.slice.call(doc.querySelectorAll(mediaSel));
+        for (i = 0; i < list.length; i++) {
+          el = list[i];
+          var attrs = ['src', 'data', 'poster'];
+          for (var k = 0; k < attrs.length; k++) {
+            var attr = attrs[k];
+            var val = el.getAttribute(attr);
+            if (!val || htmlPreviewIsExternal(val)) continue;
+            var uri = await assetToDataUri(val, baseDir);
+            if (uri) el.setAttribute(attr, uri);
+          }
+        }
+
+        // 4. srcset（"path 2x, path2 800w" 形式）
+        list = Array.prototype.slice.call(doc.querySelectorAll('[srcset]'));
+        for (i = 0; i < list.length; i++) {
+          el = list[i];
+          var parts = (el.getAttribute('srcset') || '').split(',');
+          var rebuilt = [];
+          var changed = false;
+          for (var c = 0; c < parts.length; c++) {
+            var piece = parts[c].trim();
+            if (!piece) continue;
+            var sp = piece.split(/\s+/);
+            if (!htmlPreviewIsExternal(sp[0])) {
+              var su = await assetToDataUri(sp[0], baseDir);
+              if (su) { sp[0] = su; changed = true; }
+            }
+            rebuilt.push(sp.join(' '));
+          }
+          if (changed) el.setAttribute('srcset', rebuilt.join(', '));
+        }
+
+        // 5. <style> ブロックと style 属性の url()
+        list = Array.prototype.slice.call(doc.querySelectorAll('style'));
+        for (i = 0; i < list.length; i++) {
+          list[i].textContent = await rewriteCss(list[i].textContent || '', baseDir);
+        }
+        list = Array.prototype.slice.call(doc.querySelectorAll('[style*="url("]'));
+        for (i = 0; i < list.length; i++) {
+          list[i].setAttribute('style', await rewriteCss(list[i].getAttribute('style') || '', baseDir));
+        }
+      }
+
+      // localStorage シムを先頭に差し込む
+      try {
+        var shim = doc.createElement('script');
+        shim.textContent = HTML_PREVIEW_SHIM;
+        var head = doc.head || doc.documentElement;
+        head.insertBefore(shim, head.firstChild);
+      } catch (e) { /* 差し込めなくても描画は続行 */ }
+
+      result.html = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+      return result;
+    }
+
+    // HTML ファイルをプレビュー描画（renderByType から呼ばれる）
+    function renderHtmlPreview(content, file) {
+      var viewer = document.getElementById('viewer-content');
+      var target = file || state.currentFile;
+      var seq = ++htmlPreviewSeq;
+
+      viewer.innerHTML = '<div class="loading"><div class="spinner"></div>HTML を描画中...</div>';
+
+      htmlPreviewInline(content, target).then(function(res) {
+        if (seq !== htmlPreviewSeq) return; // 別ファイルに切り替わっていた
+        mountHtmlPreview(res.html, content, res.resolved, res.missing);
+      }).catch(function(err) {
+        if (seq !== htmlPreviewSeq) return;
+        // 相対参照の解決に失敗しても、素の HTML はそのまま出す
+        mountHtmlPreview(content, content, 0, [String(err && err.message || err)]);
+      });
+    }
+
+    // プレビュー UI（ツールバー + sandbox iframe）を組み立てて表示
+    function mountHtmlPreview(html, rawSource, resolvedCount, missing) {
+      var viewer = document.getElementById('viewer-content');
+      viewer.innerHTML = '';
+
+      var wrap = document.createElement('div');
+      wrap.className = 'html-preview-wrap';
+
+      var bar = document.createElement('div');
+      bar.className = 'html-preview-bar';
+
+      var info = document.createElement('span');
+      info.className = 'html-preview-info';
+      var msg = 'ブラウザ表示';
+      if (resolvedCount) msg += ' ・ 関連ファイル ' + resolvedCount + ' 件を埋め込み';
+      if (missing && missing.length) {
+        msg += ' ・ 未解決 ' + missing.length + ' 件';
+        info.title = 'Drive 上で見つからなかった参照:\n' + missing.join('\n');
+      }
+      info.textContent = msg;
+      bar.appendChild(info);
+
+      var frame = document.createElement('iframe');
+      frame.className = 'html-preview-frame';
+      // allow-same-origin は付けない → 親アプリの DOM / トークンには到達できない
+      frame.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-forms allow-downloads');
+      frame.setAttribute('referrerpolicy', 'no-referrer');
+      frame.setAttribute('title', 'HTML プレビュー');
+
+      var reloadBtn = document.createElement('button');
+      reloadBtn.type = 'button';
+      reloadBtn.textContent = '⟳ 再読込';
+      reloadBtn.addEventListener('click', function() {
+        frame.srcdoc = '';
+        frame.srcdoc = html;
+      });
+      bar.appendChild(reloadBtn);
+
+      var openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.textContent = '↗ 別タブ';
+      openBtn.addEventListener('click', function() {
+        try {
+          var blob = new Blob([html], { type: 'text/html' });
+          var url = URL.createObjectURL(blob);
+          var w = window.open(url, '_blank');
+          if (!w) showToast('ポップアップがブロックされました', 'error');
+          setTimeout(function() { URL.revokeObjectURL(url); }, 60000);
+        } catch (e) {
+          showToast('別タブで開けませんでした: ' + e.message, 'error');
+        }
+      });
+      bar.appendChild(openBtn);
+
+      var fsBtn = document.createElement('button');
+      fsBtn.type = 'button';
+      fsBtn.textContent = '⛶ 全画面';
+      fsBtn.addEventListener('click', function() {
+        var on = wrap.classList.toggle('fullscreen');
+        fsBtn.textContent = on ? '✕ 閉じる' : '⛶ 全画面';
+        document.body.style.overflow = on ? 'hidden' : '';
+      });
+      bar.appendChild(fsBtn);
+
+      wrap.appendChild(bar);
+      wrap.appendChild(frame);
+      viewer.appendChild(wrap);
+
+      // iframe を DOM に入れてから srcdoc を設定する（Safari で描画が抜けるのを防ぐ）
+      frame.srcdoc = html;
+    }
+
+    // ============================================================
     // ファイルタイプ別レンダリング振り分け
     // ============================================================
     function renderByType(content, ft) {
       if (ft === 'csv') return renderCsv(content);
       if (ft === 'ipynb') return renderNotebook(content);
       if (ft === 'py') return renderCode(content, 'python');
+      if (ft === 'html') return renderHtmlPreview(content);
       if (ft === 'code') return renderCodeAuto(content);
       if (ft === 'txt') return renderPlainText(content);
       if (ft === 'md') return renderMarkdown(content);
@@ -4476,8 +4918,8 @@
       const viewer = document.getElementById('viewer-content');
       const btn = document.getElementById('btn-edit');
       var ft = getFileType(state.currentFile ? state.currentFile.name : '');
-      var editLabel = ft === 'csv' ? 'ソース' : '編集';
-      var viewLabel = ft === 'csv' ? 'テーブル' : '閲覧';
+      var editLabel = getEditLabel(ft);
+      var viewLabel = getViewLabel(ft);
 
       if (state.isEditing) {
         editor.value = state.currentContent;
@@ -4497,7 +4939,7 @@
         const tab = state.openTabs[state.activeTabIndex];
         tab.isEditing = state.isEditing;
         tab.content = state.currentContent;
-        tab.renderedHtml = viewer.innerHTML;
+        if (ft !== 'html') tab.renderedHtml = viewer.innerHTML;
       }
     }
 
@@ -4593,6 +5035,18 @@
       return btoa(binary);
     }
 
+    // 編集/閲覧トグルボタンのラベル（ファイルタイプ別）
+    function getEditLabel(ft) {
+      if (ft === 'csv') return 'ソース';
+      if (ft === 'html') return 'コード';
+      return '編集';
+    }
+    function getViewLabel(ft) {
+      if (ft === 'csv') return 'テーブル';
+      if (ft === 'html') return 'プレビュー';
+      return '閲覧';
+    }
+
     // ファイルタイプ判定ヘルパー（全箇所でこれを使う）
     function getFileType(name) {
       if (!name) return 'md';
@@ -4604,6 +5058,7 @@
       if (n.endsWith('.py')) return 'py';
       if (n.endsWith('.ipynb')) return 'ipynb';
       if (/\.(png|jpe?g|gif|svg|webp|bmp|ico)$/.test(n)) return 'image';
+      if (/\.x?html?$/.test(n)) return 'html';
       if (/\.(html?|xml|json|ya?ml|toml|ini|cfg|conf|sh|bash|zsh|bat|ps1|rb|pl|php|java|kt|swift|go|rs|c|cpp|h|hpp|cs|ts|tsx|jsx|js|css|scss|sass|less|sql|r|lua|dart|scala|ex|exs|hs|clj|vim|dockerfile|makefile)$/i.test(n)) return 'code';
       return 'other';
     }
@@ -4617,6 +5072,7 @@
         txt: { cls: 'txt-icon', label: 'TXT' },
         py: { cls: 'py-icon', label: 'PY' },
         ipynb: { cls: 'ipynb-icon', label: 'NB' },
+        html: { cls: 'html-icon', label: 'HTML' },
         image: { cls: 'img-icon', label: 'IMG' },
         code: { cls: 'code-icon', label: 'CODE' },
         other: { cls: 'other-icon', label: 'FILE' }
@@ -4630,7 +5086,8 @@
         md: 'text/markdown', csv: 'text/csv', txt: 'text/plain',
         py: 'text/x-python', ipynb: 'application/json',
         js: 'text/javascript', jsx: 'text/javascript', ts: 'text/typescript', tsx: 'text/typescript',
-        html: 'text/html', htm: 'text/html', xml: 'application/xml', css: 'text/css',
+        html: 'text/html', htm: 'text/html', xhtml: 'application/xhtml+xml',
+        xml: 'application/xml', css: 'text/css',
         scss: 'text/x-scss', sass: 'text/x-sass', less: 'text/x-less',
         json: 'application/json', yaml: 'text/yaml', yml: 'text/yaml',
         toml: 'text/plain', ini: 'text/plain', cfg: 'text/plain', conf: 'text/plain',

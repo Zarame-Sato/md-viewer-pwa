@@ -121,14 +121,55 @@ md-viewer-pwa/
 
 ---
 
+## 4.5 HTML プレビュー（ブラウザ同等表示）
+
+`.html` / `.htm` / `.xhtml` は **サンドボックス iframe でレンダリング表示**する（従来はシンタックスハイライト付きのソース表示のみだった）。
+
+| 項目 | 内容 |
+|---|---|
+| ファイルタイプ | `getFileType()` が `'html'` を返す（`'code'` より先に判定） |
+| 描画 | `renderHtmlPreview()` → `htmlPreviewInline()` → `mountHtmlPreview()` |
+| 表示切替 | ヘッダーの「コード」/「プレビュー」ボタン（CSV の「ソース」/「テーブル」と同じ仕組み） |
+| ツールバー | 再読込 / 別タブ（Blob URL）/ 全画面 |
+
+### 相対パス参照の解決
+
+HTML 内の相対参照（`./style.css`、`img/logo.png` など）は、`state.files` の `drivePath` を
+突き合わせて Drive 上の実体を取得し、単体で完結する HTML に組み立て直してから流し込む。
+
+- `<link rel=stylesheet>` → `<style>` に展開（内部の `url()` / `@import` も再帰的に解決）
+- `<script src>` → 中身をインライン化
+- `img` / `source` / `video` / `audio` / `embed` / `object` / `srcset` → data URI 化
+- `<style>` ブロック・`style` 属性内の `url()` → data URI 化
+- 絶対URL（`https://` / `data:` / `//`）はそのまま残す → CDN 参照は通常どおり動く
+- `<base href>` があるページは作者の指定を尊重して解決しない
+- 見つからなかった参照はツールバーに「未解決 N 件」と表示（`title` に一覧）
+
+### セキュリティ
+
+`sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-forms allow-downloads"`。
+**`allow-same-origin` は付けない** ため、プレビュー内のスクリプトから親アプリの DOM や
+Drive / GitHub のトークンには一切到達できない（`parent.document` は `SecurityError`）。
+
+その副作用で iframe 内の `localStorage` / `sessionStorage` 参照が例外を投げるので、
+`HTML_PREVIEW_SHIM` をページ先頭に注入してメモリ実装に差し替えている（既存ページが落ちないようにするため）。
+
+### タブ状態
+
+iframe は `innerHTML` で復元すると再実行されて壊れるため、PDF / 画像と同様に
+`tab.renderedHtml` のキャッシュ対象から除外し、タブ復帰時は `content` から再描画する。
+
+---
+
 ## 5. 未着手・今後の検討事項
 
 > 以下は前回セッション時点で話題に上がっていた、または改善余地のある項目。
 
 1. **GitHub Pages へのデプロイ**: ファイルは完成しているがリポジトリへの push / Pages 設定はまだ（setup-guide.md に手順あり）
 2. **PWA アイコン**: 現在は SVG のインラインアイコンのみ。実機テスト後に PNG アイコンが必要になる可能性あり
-3. **オフライン時の編集同期**: 現状オフラインキャッシュは閲覧のみ。オフラインで編集 → オンライン復帰時に push するキュー機構は未実装
-4. **Git コミット管理**: リポジトリに `.git` はあるが、まだコミット履歴なし（`git log` で確認済み）
+3. **HTML プレビューの相対リンク遷移**: `<a href="page2.html">` のようなページ間リンクは未対応（sandbox の srcdoc 内なので遷移先が解決できない）
+4. **オフライン時の編集同期**: 現状オフラインキャッシュは閲覧のみ。オフラインで編集 → オンライン復帰時に push するキュー機構は未実装
+5. **Git コミット管理**: リポジトリに `.git` はあるが、まだコミット履歴なし（`git log` で確認済み）
 
 ---
 
