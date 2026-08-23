@@ -121,6 +121,67 @@ md-viewer-pwa/
 
 ---
 
+## 4.5 HTML プレビュー（ブラウザ同等表示）
+
+`.html` / `.htm` / `.xhtml` は **サンドボックス iframe でレンダリング表示**する（従来はシンタックスハイライト付きのソース表示のみだった）。
+
+| 項目 | 内容 |
+|---|---|
+| ファイルタイプ | `getFileType()` が `'html'` を返す（`'code'` より先に判定） |
+| 描画 | `renderHtmlPreview()` → `htmlPreviewInline()` → `mountHtmlPreview()` |
+| 表示切替 | ヘッダーの「コード」/「プレビュー」ボタン（CSV の「ソース」/「テーブル」と同じ仕組み） |
+| ツールバー | ◀ 戻る / ▶ 進む / ⟳ 再読込 / ↗ 別タブ（Blob URL）/ ⛶ 全画面 |
+| 枠の高さ | `sizeHtmlPreview()` が実測して画面に収める（ツールバーが sticky ヘッダーに隠れないため） |
+
+### 相対パス参照の解決
+
+HTML 内の相対参照（`./style.css`、`img/logo.png` など）は、`state.files` の `drivePath` を
+突き合わせて Drive 上の実体を取得し、単体で完結する HTML に組み立て直してから流し込む。
+
+- `<link rel=stylesheet>` → `<style>` に展開（内部の `url()` / `@import` も再帰的に解決）
+- `<script src>` → 中身をインライン化
+- `img` / `source` / `video` / `audio` / `embed` / `object` / `srcset` → data URI 化
+- `<style>` ブロック・`style` 属性内の `url()` → data URI 化
+- 絶対URL（`https://` / `data:` / `//`）はそのまま残す → CDN 参照は通常どおり動く
+- `<base href>` があるページは作者の指定を尊重して解決しない
+- 見つからなかった参照はツールバーに「未解決 N 件」と表示（`title` に一覧）
+
+### ページ間リンクの遷移
+
+iframe に注入したシムが相対リンクのクリックを横取りし、`postMessage` で親アプリに
+`{ __folioNav: true, href }` を送る。親は `htmlPreviewNavigate()` で Drive 上のファイルに
+解決し、**同じタブのまま次のページを描画**する（タブの対象ファイルも差し替わるので、
+編集・保存・Push は「いま見ているページ」に対して働く）。
+
+- `ch1.html` / `chapters/ch2.html` / `../index.html` などの相対パスに対応
+- 拡張子なし（`chapter1`）やディレクトリ指定（`chapters/`）は
+  `.html` → `.htm` → `/index.html` → `/index.htm` の順で候補を試す
+- `page.html#sec2` はページ遷移後にそのアンカーへスクロール
+- ページ内アンカー（`#id`）は srcdoc だと既定動作が効かないのでシム側で `scrollIntoView`
+- 絶対URL は横取りせず iframe 内でそのまま遷移
+- HTML 以外（PDF/画像/md）へのリンクは `openFile()` で通常のファイルとして開く
+- 解決できないリンクはトーストで通知して遷移しない
+- 戻る/進む履歴はタブごと（`tab.navBack` / `tab.navFwd`）に保持
+
+親側の `message` リスナーは `ev.source !== frame.contentWindow` を弾く。
+sandbox に `allow-same-origin` がないので origin は `"null"` になり、origin 比較は使えない。
+
+### セキュリティ
+
+`sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-forms allow-downloads"`。
+**`allow-same-origin` は付けない** ため、プレビュー内のスクリプトから親アプリの DOM や
+Drive / GitHub のトークンには一切到達できない（`parent.document` は `SecurityError`）。
+
+その副作用で iframe 内の `localStorage` / `sessionStorage` 参照が例外を投げるので、
+`HTML_PREVIEW_SHIM` をページ先頭に注入してメモリ実装に差し替えている（既存ページが落ちないようにするため）。
+
+### タブ状態
+
+iframe は `innerHTML` で復元すると再実行されて壊れるため、PDF / 画像と同様に
+`tab.renderedHtml` のキャッシュ対象から除外し、タブ復帰時は `content` から再描画する。
+
+---
+
 ## 5. 未着手・今後の検討事項
 
 > 以下は前回セッション時点で話題に上がっていた、または改善余地のある項目。
