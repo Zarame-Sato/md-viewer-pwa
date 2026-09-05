@@ -774,10 +774,12 @@
     .file-list.view-tile { margin-right: -1px; }
     .file-list.view-tile .file-icon,
     .file-list.view-tile .folder-icon {
+      /* 縦長にする。中身は PDF や書類が多く、A4 は 1:1.41 の縦長。
+         横長の枠だと contain で縮んで左右が余白だらけになる */
       width: 100%;
       height: auto;
-      aspect-ratio: 4 / 3;
-      max-height: 190px;
+      aspect-ratio: 3 / 4;
+      max-height: 240px;
       margin: 0;
     }
     .file-list.view-tile .file-icon svg,
