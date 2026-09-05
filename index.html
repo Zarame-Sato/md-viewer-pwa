@@ -927,16 +927,17 @@
     }
 
     /* ===== ファイルタブバー ===== */
+    /* ヘッダー行の中に入っているので、独立した行としての下線と余白は持たない。
+       残り幅いっぱいに伸び、タブが増えたら中で横スクロールする。 */
     .file-tabs {
       display: flex;
+      flex: 1;
+      min-width: 0;
       overflow-x: auto;
-      background: var(--bg);
-      -webkit-backdrop-filter: var(--glass);
-      backdrop-filter: var(--glass);
-      border-bottom: 1px solid var(--border);
+      background: transparent;
       -webkit-overflow-scrolling: touch;
       scrollbar-width: none;
-      padding: 3px 4px 0;
+      padding: 0;
       gap: 2px;
     }
     .file-tabs::-webkit-scrollbar { display: none; }
@@ -944,34 +945,31 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 12px;
-      font-size: 12px;
+      padding: 6px 10px;
+      font-size: 12.5px;
       color: var(--text-muted);
-      border-radius: 8px 8px 0 0;
+      border-radius: var(--radius-sm);
       cursor: pointer;
       white-space: nowrap;
       flex-shrink: 0;
       transition: all 0.2s ease;
-      max-width: 180px;
+      max-width: 260px;
       border: 1px solid transparent;
       border-bottom: none;
     }
     .file-tab:hover { background: var(--bg-hover); color: var(--text); }
     .file-tab.active {
-      background: var(--card-bg);
+      background: var(--accent-soft);
       color: var(--accent);
-      border-color: var(--border);
-      border-bottom: none;
+      border-color: transparent;
       position: relative;
     }
-    .file-tab.active::after {
-      content: '';
-      position: absolute;
-      bottom: -1px;
-      left: 0; right: 0;
-      height: 2px;
-      background: var(--accent);
-      box-shadow: 0 0 8px var(--accent-glow);
+    /* 行の底に敷く下線だったが、タブが行内の要素になったので不要 */
+
+    /* 狭い画面ではボタンを 2 行目に送り、タブに 1 行目を丸ごと使わせる。
+       1 行に押し込むとタブが 100px 程度まで潰れてファイル名が読めなくなる。 */
+    @media (max-width: 699px) {
+      .viewer-header .file-tabs { flex: 1 0 calc(100% - 48px); }
     }
     .file-tab-label {
       overflow: hidden;
@@ -1295,13 +1293,14 @@
       <div id="page-viewer" class="page">
         <!-- スクロール時に上部固定されるエリア -->
         <div class="viewer-sticky-header">
-          <!-- 開いているファイルのタブバー -->
-          <div id="file-tabs" class="file-tabs" style="display:none;"></div>
           <div class="viewer-header">
           <button class="back-btn" onclick="showPage('files')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
           </button>
-          <span class="title" id="viewer-title">-</span>
+          <!-- 開いているファイルのタブバー。ファイル名はここだけに出す -->
+          <div id="file-tabs" class="file-tabs" style="display:none;"></div>
+          <!-- ファイル名の表示はタブに任せる。JS が textContent を入れる先として残す -->
+          <span class="title" id="viewer-title" hidden>-</span>
           <button class="btn btn-secondary" onclick="toggleEdit()" id="btn-edit">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             編集
