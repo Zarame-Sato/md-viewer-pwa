@@ -723,6 +723,88 @@
       color: var(--text-muted);
     }
 
+    /* ===== 一覧の上部ツールバー ===== */
+    .files-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .files-toolbar .search-bar { flex: 1; margin-bottom: 0; }
+    .view-toggle {
+      display: flex;
+      flex-shrink: 0;
+      background: var(--card-bg);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .view-toggle button {
+      width: 38px; height: 40px;
+      display: flex; align-items: center; justify-content: center;
+      background: transparent;
+      border: 0;
+      color: var(--text-muted);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.12s, color 0.12s;
+    }
+    .view-toggle button svg { width: 18px; height: 18px; }
+    .view-toggle button + button { border-left: 1px solid var(--border); }
+    .view-toggle button.active { background: var(--accent-soft); color: var(--accent); }
+
+    /* ===== タイル表示 ===== */
+    .file-list.view-tile {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+    .file-list.view-tile .file-item,
+    .file-list.view-tile .folder-item {
+      flex-direction: column;
+      justify-content: flex-start;
+      text-align: center;
+      padding: 18px 10px 15px;
+      gap: 10px;
+      border-right: 1px solid var(--border);
+    }
+    .file-list.view-tile > *:nth-child(2n) { border-right: 0; }
+    .file-list.view-tile .file-icon,
+    .file-list.view-tile .folder-icon {
+      width: 72px; height: 72px;
+      margin: 0;
+    }
+    .file-list.view-tile .file-icon svg,
+    .file-list.view-tile .folder-icon svg { width: 44px; height: 44px; }
+    .file-list.view-tile .file-info,
+    .file-list.view-tile .folder-name { width: 100%; text-align: center; }
+    .file-list.view-tile .file-name,
+    .file-list.view-tile .folder-name {
+      font-size: 12.5px;
+      line-height: 1.45;
+      white-space: normal;
+      word-break: break-word;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .file-list.view-tile .file-meta { font-size: 10.5px; margin-top: 3px; }
+    .file-list.view-tile .file-count-badge,
+    .file-list.view-tile .folder-count { margin: 0 auto; }
+    /* タイルでは行末の「>」を出さない */
+    .file-list.view-tile > .file-item > svg:last-child,
+    .file-list.view-tile > .folder-item > svg:last-child { display: none; }
+
+    /* サムネイル（PDF / 画像） */
+    /* contain にする: PDF の縦長ページや横長の画像を切り取らずに形のまま見せる */
+    .file-thumb {
+      width: 100%; height: 100%;
+      object-fit: contain;
+      background: var(--bg-sunken);
+      display: block;
+    }
+    .file-icon.has-thumb { border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+
     /* ===== パンくずリスト ===== */
     .breadcrumb {
       display: flex;
@@ -1132,9 +1214,19 @@
     <main>
       <!-- ファイル一覧ページ -->
       <div id="page-files" class="page active">
-        <div class="search-bar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input type="text" placeholder="ファイル名で検索..." oninput="filterFiles(this.value)">
+        <div class="files-toolbar">
+          <div class="search-bar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input type="text" placeholder="ファイル名で検索..." oninput="filterFiles(this.value)">
+          </div>
+          <div class="view-toggle" id="view-toggle">
+            <button type="button" data-view="list" onclick="setViewMode('list')" title="リスト表示" aria-label="リスト表示">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+            </button>
+            <button type="button" data-view="tile" onclick="setViewMode('tile')" title="タイル表示" aria-label="タイル表示">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            </button>
+          </div>
         </div>
         <!-- パンくずリスト（フォルダナビゲーション） -->
         <div id="breadcrumb" class="breadcrumb" style="display:none;"></div>
@@ -1332,6 +1424,98 @@
       // Google Drive OAuth 用
       gdriveApiKey: null,
     };
+
+    // ============================================================
+    // 一覧の表示形式（リスト / タイル）とサムネイル
+    // ============================================================
+    const VIEW_KEY = 'mdviewer_view';
+
+    function getViewMode() {
+      try {
+        return localStorage.getItem(VIEW_KEY) === 'tile' ? 'tile' : 'list';
+      } catch (e) { return 'list'; }
+    }
+
+    function setViewMode(mode) {
+      try { localStorage.setItem(VIEW_KEY, mode); } catch (e) { /* 保存できなくても切替はする */ }
+      applyViewMode();
+      renderFileList(document.querySelector('.search-bar input') ? document.querySelector('.search-bar input').value : '');
+    }
+
+    function applyViewMode() {
+      const mode = getViewMode();
+      const list = document.getElementById('file-list');
+      if (list) list.classList.toggle('view-tile', mode === 'tile');
+      document.querySelectorAll('#view-toggle button').forEach(function(b) {
+        b.classList.toggle('active', b.dataset.view === mode);
+      });
+    }
+
+    // --- サムネイル ---
+    // Drive の thumbnailLink を使う。実体をダウンロードするより遥かに軽い。
+    // 画像の <img src> に直接入れると 403 になるため、認証付き fetch → blob URL にする。
+    const thumbCache = new Map();   // fileId -> blob URL | null（null = 取得失敗、再試行しない）
+
+    async function loadThumbUrl(file) {
+      if (thumbCache.has(file.id)) return thumbCache.get(file.id);
+      if (!file.thumbnailLink || !state.gdriveToken) { thumbCache.set(file.id, null); return null; }
+      try {
+        // =s220 などのサイズ指定を付け替えて必要な分だけ取る
+        const url = file.thumbnailLink.replace(/=s\d+(-[a-z]+)?$/i, '') + '=s320';
+        const res = await fetch(url, { headers: { Authorization: 'Bearer ' + state.gdriveToken } });
+        if (!res.ok) throw new Error('thumb ' + res.status);
+        const obj = URL.createObjectURL(await res.blob());
+        thumbCache.set(file.id, obj);
+        return obj;
+      } catch (e) {
+        // 失効やサムネ未生成。線画アイコンのままにする
+        thumbCache.set(file.id, null);
+        return null;
+      }
+    }
+
+    let thumbObserver = null;
+
+    // タイル表示のときだけ、画面に入ったものから順にサムネを読み込む
+    function hydrateThumbs() {
+      if (thumbObserver) { thumbObserver.disconnect(); thumbObserver = null; }
+      if (getViewMode() !== 'tile') return;
+
+      const targets = document.querySelectorAll('#file-list .file-icon[data-thumb-index]');
+      if (targets.length === 0) return;
+
+      const swap = function(el) {
+        const file = state.files[Number(el.dataset.thumbIndex)];
+        if (!file) return;
+        loadThumbUrl(file).then(function(url) {
+          if (!url || !el.isConnected) return;
+          // loading="lazy" は付けない。DOM に入れる前に読ませるので、
+          // 付けると読み込みが始まらず onload が永久に来ない。
+          // 読み込み自体は IntersectionObserver 側で遅延させている。
+          const img = document.createElement('img');
+          img.className = 'file-thumb';
+          img.alt = '';
+          img.onload = function() {
+            if (!el.isConnected) return;
+            el.innerHTML = '';
+            el.appendChild(img);
+            el.classList.add('has-thumb');
+          };
+          img.onerror = function() { /* 線画アイコンのまま残す */ };
+          img.src = url;
+        });
+      };
+
+      if (!('IntersectionObserver' in window)) { targets.forEach(swap); return; }
+      thumbObserver = new IntersectionObserver(function(entries, obs) {
+        entries.forEach(function(en) {
+          if (!en.isIntersecting) return;
+          obs.unobserve(en.target);
+          swap(en.target);
+        });
+      }, { rootMargin: '200px' });
+      targets.forEach(function(t) { thumbObserver.observe(t); });
+    }
 
     // ============================================================
     // 外観（ライト / ダーク / 端末に合わせる）
@@ -2006,7 +2190,7 @@
         const chunk = allowedArray.slice(i, i + CHUNK_SIZE);
         const parentClauses = chunk.map(id => "'" + id + "' in parents").join(' or ');
         const query = '(' + parentClauses + ') and ' + excludeMime;
-        fetchPromises.push(driveListAll(query, 'id,name,mimeType,modifiedTime,size,parents'));
+        fetchPromises.push(driveListAll(query, 'id,name,mimeType,modifiedTime,size,parents,thumbnailLink'));
       }
       const results = await Promise.all(fetchPromises);
       const allTargetFiles = results.flat();
@@ -2042,6 +2226,8 @@
           drivePath: drivePath,
           modifiedTime: f.modifiedTime,
           size: f.size,
+          // タイル表示のサムネイル用。有効期限があるのでキャッシュ復元後は失効しうる
+          thumbnailLink: f.thumbnailLink || null,
           source: 'gdrive'
         });
       }
@@ -3621,7 +3807,24 @@
     // ファイル一覧の描画（フォルダナビゲーション対応）
     // currentPath の階層にあるフォルダとファイルだけを表示
     // ============================================================
+    // サムネイルを出す対象（PDF / 画像）にだけ目印を付ける。
+    // 実際の読み込みは hydrateThumbs() が画面内に入ってから行う。
+    function thumbAttr(file, index) {
+      var t = getFileType(file.name);
+      if (t !== 'pdf' && t !== 'image') return '';
+      if (!file.thumbnailLink) return '';
+      return ' data-thumb-index="' + index + '"';
+    }
+
+    // 実描画は renderFileListInner。表示形式の反映とサムネ読み込みは
+    // 途中 return が多いので、ここで包んで確実に通す。
     function renderFileList(filter = '') {
+      renderFileListInner(filter);
+      applyViewMode();
+      hydrateThumbs();
+    }
+
+    function renderFileListInner(filter = '') {
       const container = document.getElementById('file-list');
       let files = state.files;
 
@@ -3648,7 +3851,7 @@
           const iconClass = _ic.cls;
           const iconLabel = _ic.label;
           return '<div class="file-item" onclick="openFile(' + idx + ')">' +
-            '<div class="file-icon ' + iconClass + '">' + getFileGlyph(f.name) + '</div>' +
+            '<div class="file-icon ' + iconClass + '"' + thumbAttr(f, idx) + '>' + getFileGlyph(f.name) + '</div>' +
             '<div class="file-info">' +
             '<div class="file-name">' + escapeHtml(fileName) + '</div>' +
             '<div class="file-meta">' + (folderPath ? escapeHtml(folderPath) + ' ・ ' : '') + date + '</div>' +
@@ -3725,7 +3928,7 @@
         const iconCls = _ic2.cls;
         const iconLbl = _ic2.label;
         html += '<div class="file-item" onclick="openFile(' + idx + ')">' +
-          '<div class="file-icon ' + iconCls + '">' + getFileGlyph(f.name) + '</div>' +
+          '<div class="file-icon ' + iconCls + '"' + thumbAttr(f, idx) + '>' + getFileGlyph(f.name) + '</div>' +
           '<div class="file-info">' +
           '<div class="file-name">' + escapeHtml(f.name) + '</div>' +
           '<div class="file-meta">Google Drive' + (date ? ' ・ ' + date : '') + '</div>' +

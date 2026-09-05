@@ -246,6 +246,31 @@ PAT に有効期限がなければこれで恒久的に自動。「この端末�
 - 種別アイコンは塗りバッジをやめ、**1 種類 1 色の線画**（`FILE_GLYPHS`）
 - アクセントは青。状態色は緑 / 赤
 
+### 表示形式（リスト / タイル）
+
+`#file-list` に `.view-tile` を付けるかどうかで切り替える。選択は
+`localStorage['mdviewer_view']` に保存し、次回起動時も維持する。
+
+`renderFileList()` は途中 return が多いため、実描画は `renderFileListInner()` に分け、
+外側の `renderFileList()` が `applyViewMode()` と `hydrateThumbs()` を必ず通すようにしている。
+**新しく早期 return を足しても後処理が飛ばない**のはこの構造のおかげ。
+
+### サムネイル（タイル表示時のみ）
+
+PDF と画像は Drive の `thumbnailLink` を使う。実体をダウンロードするより遥かに軽い。
+
+- 一覧取得の `fields` に `thumbnailLink` を追加してある
+- `<img src>` に直接入れると 403 になるので、**認証付き fetch → blob URL** にする
+- URL 末尾のサイズ指定を `=s320` に付け替えて必要な分だけ取る
+- `IntersectionObserver` で画面に入ったものから読む。`thumbCache` に blob URL を保持し、
+  失敗は `null` を入れて再試行しない（線画アイコンのまま）
+- `thumbnailLink` には有効期限があるため、localStorage のファイルキャッシュから
+  復元した直後は失効していることがある。その場合は線画アイコンにフォールバックする
+
+> **注意**: サムネの `<img>` に `loading="lazy"` を付けてはいけない。
+> DOM に入れる前に読み込ませているため、付けると読み込みが始まらず `onload` が
+> 永久に来ない（遅延読み込みは IntersectionObserver 側で行っている）。
+
 > **注意**: 一覧の行を作る箇所は `renderFileList()` 内に **2 つある**
 > （検索・フラット表示用と、フォルダ内表示用）。変数名が `iconClass` と `iconCls` で
 > 違うため片方だけ直しやすい。アイコンを変えるときは必ず両方直すこと。
