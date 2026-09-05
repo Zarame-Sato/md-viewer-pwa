@@ -48,25 +48,25 @@
     :root {
       color-scheme: light;
       /* 面 */
-      --bg: #fbfaf8;             /* 紙のような温かい白 */
-      --bg-surface: rgba(251, 250, 248, 0.86);
+      --bg: #f2f4f6;             /* 淡いグレーの地 */
+      --bg-surface: #ffffff;
       --card-bg: #ffffff;
-      --bg-hover: #f1efeb;
-      --bg-sunken: #f4f2ee;      /* コードブロックなど一段沈んだ面 */
-      --overlay-soft: rgba(0, 0, 0, 0.04);
-      --nav-bg: rgba(251, 250, 248, 0.92);
+      --bg-hover: #f7f8fa;
+      --bg-sunken: #f2f4f6;
+      --overlay-soft: rgba(0, 0, 0, 0.035);
+      --nav-bg: #ffffff;
       /* 文字 */
-      --text: #23211e;
-      --text-secondary: #56534d;
-      --text-muted: #8b877f;
+      --text: #2b2f33;
+      --text-secondary: #5b636b;
+      --text-muted: #949ba3;
       /* アクセント */
       --accent: #2f6fe4;
       --accent-hover: #2358c4;
       --accent-soft: rgba(47, 111, 228, 0.09);
       --accent-glow: rgba(47, 111, 228, 0.16);
       /* 線 */
-      --border: rgba(0, 0, 0, 0.08);
-      --border-strong: rgba(0, 0, 0, 0.14);
+      --border: rgba(0, 0, 0, 0.075);
+      --border-strong: rgba(0, 0, 0, 0.13);
       --border-glow: rgba(47, 111, 228, 0.4);
       /* 状態色 */
       --success: #12996b;
@@ -75,12 +75,12 @@
       --danger: #d3453c;
       --danger-soft: rgba(211, 69, 60, 0.11);
       /* 影（Craft は線ではなく影で面を分ける） */
-      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-      --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 16px -8px rgba(0, 0, 0, 0.12);
-      --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.04), 0 16px 32px -16px rgba(0, 0, 0, 0.18);
+      --shadow-sm: none;
+      --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.05);
+      --shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.08);
       /* 形 */
-      --radius: 12px;
-      --radius-sm: 8px;
+      --radius: 5px;
+      --radius-sm: 4px;
       --safe-top: env(safe-area-inset-top, 0px);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
       --glass: saturate(180%) blur(20px);
@@ -90,16 +90,16 @@
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
         color-scheme: dark;
-        --bg: #1a1a19;
-        --bg-surface: rgba(26, 26, 25, 0.86);
-        --card-bg: #232322;
-        --bg-hover: #2d2d2b;
-        --bg-sunken: #161615;
-        --overlay-soft: rgba(255, 255, 255, 0.055);
-        --nav-bg: rgba(26, 26, 25, 0.92);
-        --text: #edebe7;
-        --text-secondary: #b5b1aa;
-        --text-muted: #86827b;
+        --bg: #15181c;
+        --bg-surface: #1c2026;
+        --card-bg: #1c2026;
+        --bg-hover: #232830;
+        --bg-sunken: #15181c;
+        --overlay-soft: rgba(255, 255, 255, 0.05);
+        --nav-bg: #1c2026;
+        --text: #e8ecf0;
+        --text-secondary: #aab3bd;
+        --text-muted: #7e8792;
         --accent: #6e9bff;
         --accent-hover: #8aafff;
         --accent-soft: rgba(110, 155, 255, 0.14);
@@ -112,25 +112,25 @@
         --warning: #e0a33a;
         --danger: #f0736a;
         --danger-soft: rgba(240, 115, 106, 0.14);
-        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-        --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 16px -8px rgba(0, 0, 0, 0.6);
-        --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.3), 0 16px 32px -16px rgba(0, 0, 0, 0.7);
+        --shadow-sm: none;
+        --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4);
+        --shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.5);
       }
     }
 
     /* 手動でダークを選んだとき（OS 設定より優先） */
     :root[data-theme="dark"] {
       color-scheme: dark;
-      --bg: #1a1a19;
-      --bg-surface: rgba(26, 26, 25, 0.86);
-      --card-bg: #232322;
-      --bg-hover: #2d2d2b;
-      --bg-sunken: #161615;
-      --overlay-soft: rgba(255, 255, 255, 0.055);
-      --nav-bg: rgba(26, 26, 25, 0.92);
-      --text: #edebe7;
-      --text-secondary: #b5b1aa;
-      --text-muted: #86827b;
+      --bg: #15181c;
+      --bg-surface: #1c2026;
+      --card-bg: #1c2026;
+      --bg-hover: #232830;
+      --bg-sunken: #15181c;
+      --overlay-soft: rgba(255, 255, 255, 0.05);
+      --nav-bg: #1c2026;
+      --text: #e8ecf0;
+      --text-secondary: #aab3bd;
+      --text-muted: #7e8792;
       --accent: #6e9bff;
       --accent-hover: #8aafff;
       --accent-soft: rgba(110, 155, 255, 0.14);
@@ -143,9 +143,9 @@
       --warning: #e0a33a;
       --danger: #f0736a;
       --danger-soft: rgba(240, 115, 106, 0.14);
-      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-      --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 16px -8px rgba(0, 0, 0, 0.6);
-      --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.3), 0 16px 32px -16px rgba(0, 0, 0, 0.7);
+      --shadow-sm: none;
+      --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4);
+      --shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.5);
     }
 
     html, body {
@@ -297,40 +297,43 @@
     .file-list {
       display: flex;
       flex-direction: column;
-      gap: 1px;
+      gap: 0;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
     }
     .file-item {
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 9px 10px;
-      background: transparent;
-      border-radius: var(--radius-sm);
+      gap: 14px;
+      padding: 13px 14px;
+      background: var(--card-bg);
       cursor: pointer;
       transition: background 0.12s ease;
-      border: 1px solid transparent;
+      border-bottom: 1px solid var(--border);
     }
+    .file-list .file-item:last-child { border-bottom: 0; }
     .file-item:hover, .file-item:active { background: var(--bg-hover); }
+    /* 種別は「塗りバッジ」ではなく線画アイコン。1種類 1色 */
     .file-icon {
       width: 30px; height: 30px;
-      border-radius: 7px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 9px; font-weight: 700; color: #fff;
-      letter-spacing: 0.03em;
       flex-shrink: 0;
+      background: none;
     }
-    /* 種類の色は「小さな差し色」。グラデをやめて単色にする */
-    .file-icon.md-icon { background: #3b6fd4; }
-    .file-icon.pdf-icon { background: #d0453d; }
-    .file-icon.csv-icon { background: #0f8f66; }
-    .file-icon.txt-icon { background: #8a867e; }
-    .file-icon.py-icon { background: #b98008; }
-    .file-icon.ipynb-icon { background: #d1620f; }
-    .file-icon.img-icon { background: #7c53d6; }
-    .file-icon.html-icon { background: #cf3b58; }
-    .file-icon.code-icon { background: #1a7fb5; }
-    .file-icon.other-icon { background: #93908a; }
-    .file-icon.default-icon { background: var(--accent); }
+    .file-icon svg { width: 26px; height: 26px; }
+    .file-icon.md-icon    { color: #3d7bd9; }
+    .file-icon.pdf-icon   { color: #e0453b; }
+    .file-icon.csv-icon   { color: #17a67c; }
+    .file-icon.txt-icon   { color: #8b949c; }
+    .file-icon.py-icon    { color: #e8a317; }
+    .file-icon.ipynb-icon { color: #f07222; }
+    .file-icon.img-icon   { color: #8b5cf6; }
+    .file-icon.html-icon  { color: #e03b58; }
+    .file-icon.code-icon  { color: #21a5c9; }
+    .file-icon.other-icon { color: #9aa1a8; }
+    .file-icon.default-icon { color: var(--accent); }
     .file-info { flex: 1; min-width: 0; }
     .file-name {
       font-size: 14.5px;
@@ -747,24 +750,23 @@
     .folder-item {
       display: flex;
       align-items: center;
-      padding: 9px 10px;
-      margin-bottom: 1px;
-      border-radius: var(--radius-sm);
-      background: transparent;
-      border: 1px solid transparent;
+      padding: 13px 14px;
+      background: var(--card-bg);
+      border-bottom: 1px solid var(--border);
       cursor: pointer;
       transition: background 0.12s ease;
     }
+    .file-list .folder-item:last-child { border-bottom: 0; }
     .folder-item:hover { background: var(--bg-hover); }
     /* フォルダ: 絵文字ではなく塗りつぶしアイコン（JS 側で SVG を出す） */
     .folder-icon {
       width: 30px; height: 30px;
       display: flex; align-items: center; justify-content: center;
-      color: var(--text-muted);
+      color: #f0a020;
       flex-shrink: 0;
-      margin-right: 12px;
+      margin-right: 14px;
     }
-    .folder-icon svg { width: 21px; height: 21px; }
+    .folder-icon svg { width: 26px; height: 26px; }
     .folder-name {
       flex: 1;
       font-size: 14.5px;
@@ -3646,7 +3648,7 @@
           const iconClass = _ic.cls;
           const iconLabel = _ic.label;
           return '<div class="file-item" onclick="openFile(' + idx + ')">' +
-            '<div class="file-icon ' + iconClass + '">' + iconLabel + '</div>' +
+            '<div class="file-icon ' + iconClass + '">' + getFileGlyph(f.name) + '</div>' +
             '<div class="file-info">' +
             '<div class="file-name">' + escapeHtml(fileName) + '</div>' +
             '<div class="file-meta">' + (folderPath ? escapeHtml(folderPath) + ' ・ ' : '') + date + '</div>' +
@@ -3723,7 +3725,7 @@
         const iconCls = _ic2.cls;
         const iconLbl = _ic2.label;
         html += '<div class="file-item" onclick="openFile(' + idx + ')">' +
-          '<div class="file-icon ' + iconCls + '">' + iconLbl + '</div>' +
+          '<div class="file-icon ' + iconCls + '">' + getFileGlyph(f.name) + '</div>' +
           '<div class="file-info">' +
           '<div class="file-name">' + escapeHtml(f.name) + '</div>' +
           '<div class="file-meta">Google Drive' + (date ? ' ・ ' + date : '') + '</div>' +
@@ -5493,6 +5495,25 @@
       if (/\.(html?|xml|json|ya?ml|toml|ini|cfg|conf|sh|bash|zsh|bat|ps1|rb|pl|php|java|kt|swift|go|rs|c|cpp|h|hpp|cs|ts|tsx|jsx|js|css|scss|sass|less|sql|r|lua|dart|scala|ex|exs|hs|clj|vim|dockerfile|makefile)$/i.test(n)) return 'code';
       return 'other';
     }
+    // ファイルタイプ → 線画アイコン（stroke は currentColor。色は CSS 側で指定）
+    const FILE_GLYPHS = {
+      md:    '<path d="M4 4h16v16H4z"/><path d="M8 15V9l3 3 3-3v6"/>',
+      html:  '<path d="m9 8-5 4 5 4"/><path d="m15 8 5 4-5 4"/>',
+      code:  '<path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1"/><path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1"/>',
+      csv:   '<path d="M3 21V3"/><path d="M3 21h18"/><path d="M7 17V9"/><path d="M12 17V5"/><path d="M17 17v-5"/>',
+      pdf:   '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
+      py:    '<rect x="2.5" y="4" width="19" height="16" rx="2"/><path d="m7 10 3 2.5-3 2.5"/><path d="M12.5 15.5H17"/>',
+      ipynb: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
+      image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
+      txt:   '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/>',
+      other: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>'
+    };
+    function getFileGlyph(name) {
+      var t = getFileType(name);
+      return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+        'stroke-linecap="round" stroke-linejoin="round">' + (FILE_GLYPHS[t] || FILE_GLYPHS.other) + '</svg>';
+    }
+
     // ファイルタイプ → アイコンCSS / ラベル / MIMEタイプ
     function getFileIcon(name) {
       var t = getFileType(name);
