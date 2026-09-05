@@ -1139,9 +1139,9 @@
             <input type="hidden" name="username" autocomplete="username" value="md-viewer-pwa">
             <input type="password" id="github-token" name="password" autocomplete="current-password" placeholder="ghp_xxxxxxxxxxxx">
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:4px 0 8px;">
-              <input type="checkbox" id="github-save-token" style="width:auto;margin:0;">
-              トークンをこの端末に保存する
-              <span style="font-size:11px;color:var(--text-muted);">（共有端末では非推奨）</span>
+              <input type="checkbox" id="github-save-token" style="width:auto;margin:0;" checked>
+              この端末に保存して次回から自動接続する
+              <span style="font-size:11px;color:var(--text-muted);">（共有端末では OFF 推奨）</span>
             </label>
             <button type="submit" class="btn btn-primary" id="btn-fetch-repos">リポジトリ一覧を取得</button>
           </form>
@@ -1211,7 +1211,9 @@
     const savedSettings = JSON.parse(localStorage.getItem('mdviewer_settings') || '{}');
     const state = {
       // Google Drive
-      gdriveToken: null,       // OAuth アクセストークン（メモリのみ）
+      gdriveToken: null,       // OAuth アクセストークン
+      gdriveTokenExpiry: savedSettings.gdriveTokenExpiry || 0,  // 失効時刻(ms)
+      gdriveConnected: savedSettings.gdriveConnected || false,  // 一度でも接続できたか
       gdriveClientId: savedSettings.gdriveClientId || null,
       gdriveFolderId: savedSettings.gdriveFolderId || null,
 
@@ -1250,7 +1252,9 @@
         gdriveClientId: state.gdriveClientId,
         gdriveFolderId: state.gdriveFolderId,
         githubBranch: state.githubBranch,
-        repoMappings: state.repoMappings
+        repoMappings: state.repoMappings,
+        // 接続実績は「次回に自動接続してよいか」の判断に使う（トークン本体ではない）
+        gdriveConnected: state.gdriveConnected || existing.gdriveConnected || undefined
       };
       // トークン保存チェックボックスが ON ならトークン類を保存
       // state に値がなければ既存の保存値を維持する（OAuth リダイレクト後の消失防止）
@@ -1258,6 +1262,7 @@
       if (saveTokenEl && saveTokenEl.checked) {
         data.githubToken = state.githubToken || existing.githubToken || undefined;
         data.gdriveToken = state.gdriveToken || existing.gdriveToken || undefined;
+        data.gdriveTokenExpiry = state.gdriveTokenExpiry || existing.gdriveTokenExpiry || undefined;
       }
       localStorage.setItem('mdviewer_settings', JSON.stringify(data));
     }
@@ -1305,8 +1310,11 @@
         if (!window.location.hash.includes('access_token=')) {
           state.gdriveToken = savedSettings.gdriveToken;
           if (gapiReady && gapi.client) gapi.client.setToken({ access_token: state.gdriveToken });
-          verifyAndLoadDrive();
         }
+      }
+      // GitHub は PAT とマッピングが揃っていればそのまま使える（接続済み表示に戻す）
+      if (state.githubToken && Object.keys(state.repoMappings).length > 0) {
+        updateGithubStatus(true);
       }
       // リポジトリ別Pullボタンを復元
       renderPerRepoPullButtons();
@@ -1332,7 +1340,12 @@
           } else {
             state.gdriveToken = null;
             updateGdriveStatus(false);
-            showToast('Google Drive のセッションが切れました。設定から再接続してください', 'warning');
+            // iframe 内の Cookie が塞がれている環境向けの最終手段。
+            // iOS は Chrome も中身が WebKit なので、ブラウザを問わず同じ制限を受ける。
+            // トップレベル遷移なら Google の Cookie が一次パーティ扱いになるので通る。
+            if (!tryAutoRedirectAuth()) {
+              showToast('Google Drive のセッションが切れました。設定から再接続してください', 'warning');
+            }
           }
         }
       } catch (e) {
@@ -1342,26 +1355,57 @@
     }
 
     // ============================================================
+    // Drive OAuth のリダイレクト先。
+    // PWA/ブラウザで path が変わることがあるので末尾スラッシュ付きに正規化し、
+    // Google Console の登録値と必ず一致させる。
+    function getDriveRedirectUri() {
+      let uri = window.location.origin + window.location.pathname;
+      if (uri.endsWith('/index.html')) uri = uri.replace('/index.html', '/');
+      if (!uri.endsWith('/')) uri += '/';
+      return uri;
+    }
+
+    // Drive OAuth の認可 URL。
+    //   prompt 省略 … 同意済みなら無操作で戻る（初回だけ同意画面）
+    //   prompt=none … 完全サイレント。未ログインなら error= で返る
+    function buildDriveAuthUrl(clientId, prompt) {
+      let url = 'https://accounts.google.com/o/oauth2/v2/auth?' +
+        'client_id=' + encodeURIComponent(clientId) +
+        '&redirect_uri=' + encodeURIComponent(getDriveRedirectUri()) +
+        '&response_type=token' +
+        '&scope=' + encodeURIComponent('https://www.googleapis.com/auth/drive');
+      if (prompt) url += '&prompt=' + encodeURIComponent(prompt);
+      return url;
+    }
+
+    // 取得したトークンを state / gapi に反映する。
+    // expires_in は実際より 5 分早めに切れる扱いにして、期限ギリギリの失敗を避ける。
+    function setDriveToken(token, expiresInSec) {
+      state.gdriveToken = token;
+      const sec = Number(expiresInSec);
+      state.gdriveTokenExpiry = sec > 0 ? Date.now() + Math.max(0, sec - 300) * 1000 : 0;
+      state.gdriveConnected = true;
+      if (gapiReady && gapi.client) gapi.client.setToken({ access_token: token });
+    }
+
+    // 期限内のトークンを持っているか（期限不明なら「あるなら試す」）
+    function driveTokenLooksValid() {
+      if (!state.gdriveToken) return false;
+      return !state.gdriveTokenExpiry || Date.now() < state.gdriveTokenExpiry;
+    }
+
+    // ============================================================
     // Google Drive トークンのサイレント再取得
-    // hidden iframe + prompt=none で、ユーザー操作なしにトークンを更新する
-    // Googleにログイン済みなら自動成功、未ログインなら失敗→手動接続へ
+    // hidden iframe + prompt=none で、ユーザー操作なしにトークンを更新する。
+    // サードパーティ Cookie が塞がれていると失敗するので、成否は当てにせず
+    // 失敗時は tryAutoRedirectAuth() に落とす前提で使うこと。
     // ============================================================
     function silentRefreshDriveToken() {
       return new Promise((resolve) => {
         const clientId = state.gdriveClientId || document.getElementById('gdrive-client-id').value.trim();
         if (!clientId) { resolve(false); return; }
 
-        let redirectUri = window.location.origin + window.location.pathname;
-        if (redirectUri.endsWith('/index.html')) redirectUri = redirectUri.replace('/index.html', '/');
-        if (!redirectUri.endsWith('/')) redirectUri += '/';
-
-        const scope = 'https://www.googleapis.com/auth/drive';
-        const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' +
-          'client_id=' + encodeURIComponent(clientId) +
-          '&redirect_uri=' + encodeURIComponent(redirectUri) +
-          '&response_type=token' +
-          '&scope=' + encodeURIComponent(scope) +
-          '&prompt=none';  // ← ユーザー操作なしで試行
+        const authUrl = buildDriveAuthUrl(clientId, 'none');
 
         const iframe = document.createElement('iframe');
         iframe.style.display = 'none';
@@ -1388,8 +1432,7 @@
               const params = new URLSearchParams(hash.substring(1));
               const token = params.get('access_token');
               if (token) {
-                state.gdriveToken = token;
-                if (gapiReady && gapi.client) gapi.client.setToken({ access_token: token });
+                setDriveToken(token, params.get('expires_in'));
                 saveSettings();
                 cleanup();
                 resolve(true);
@@ -1409,6 +1452,64 @@
         iframe.src = authUrl;
       });
     }
+
+    // ============================================================
+    // 起動時の自動接続
+    // ============================================================
+    const AUTO_AUTH_KEY = 'mdviewer_auto_auth_tried';
+
+    // prompt=none のトップレベル遷移で無操作の再認証を試す。
+    // hidden iframe が Cookie 制限で失敗する環境（iOS は Chrome も WebKit なので
+    // ブラウザを問わず該当）でも、トップレベルなら一次パーティ Cookie が使える。
+    // Google にログイン済みなら一瞬遷移して戻ってくるだけ。未ログインなら
+    // error= 付きで戻るので、1 セッション 1 回に制限してループを防ぐ。
+    function tryAutoRedirectAuth() {
+      const clientId = state.gdriveClientId;
+      if (!clientId || !state.gdriveConnected) return false;
+      try {
+        if (sessionStorage.getItem(AUTO_AUTH_KEY)) return false; // このセッションで試行済み
+        sessionStorage.setItem(AUTO_AUTH_KEY, '1');
+      } catch (e) { return false; }
+      window.location.href = buildDriveAuthUrl(clientId, 'none');
+      return true;
+    }
+
+    // 前回の状態を復元して、可能なら無操作で Drive に繋ぎ直す。
+    //   1. 期限内の保存トークンがある      → そのまま使う
+    //   2. 切れている / 無い（接続実績あり） → hidden iframe でサイレント更新
+    //   3. それも駄目                      → prompt=none のトップレベル遷移
+    //   4. それも駄目                      → 手動接続の案内
+    async function bootstrapDriveAuth() {
+      if (window.location.hash.includes('access_token=')) return; // 別途処理済み
+      if (!state.gdriveClientId) return;
+
+      if (driveTokenLooksValid()) {
+        if (gapiReady && gapi.client) gapi.client.setToken({ access_token: state.gdriveToken });
+        verifyAndLoadDrive();
+        return;
+      }
+      if (!state.gdriveConnected) return; // 一度も接続していない → 初回は手動で
+
+      if (await silentRefreshDriveToken()) {
+        updateGdriveStatus(true);
+        saveSettings();
+        loadGdriveFiles();
+        return;
+      }
+      if (tryAutoRedirectAuth()) return; // Google へ遷移 → 戻ってくる
+      updateGdriveStatus(false);
+      showToast('Google Drive に自動接続できませんでした。設定から接続してください', 'warning');
+    }
+
+    // バックグラウンドから復帰したときに期限切れなら黙って取り直す
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState !== 'visible') return;
+      if (!state.gdriveClientId || !state.gdriveConnected) return;
+      if (driveTokenLooksValid()) return;
+      silentRefreshDriveToken().then(function(ok) {
+        if (ok) { updateGdriveStatus(true); saveSettings(); }
+      });
+    });
 
     // ============================================================
     // ページ切替
@@ -1499,25 +1600,10 @@
       } catch (e) { /* sessionStorage 失敗時は無視 */ }
 
       // OAuth2 Implicit Flow
-      // iPad/iPhone ではポップアップがブロックされるため、
-      // 同じウィンドウでリダイレクトする方式を使う
-      // PWAモード/ブラウザモードでpathが変わる場合があるため、
-      // 末尾スラッシュ付きの正規URLに統一する（Google Console側と一致させる）
-      let redirectUri = window.location.origin + window.location.pathname;
-      // index.html が付いていたら除去して / で終わるようにする
-      if (redirectUri.endsWith('/index.html')) {
-        redirectUri = redirectUri.replace('/index.html', '/');
-      }
-      if (!redirectUri.endsWith('/')) {
-        redirectUri += '/';
-      }
-      const scope = 'https://www.googleapis.com/auth/drive';
-      const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' +
-        'client_id=' + encodeURIComponent(clientId) +
-        '&redirect_uri=' + encodeURIComponent(redirectUri) +
-        '&response_type=token' +
-        '&scope=' + encodeURIComponent(scope) +
-        '&prompt=consent';
+      // iPad/iPhone ではポップアップがブロックされるため、同じウィンドウでリダイレクトする。
+      // prompt は指定しない。以前は prompt=consent で毎回同意画面が出ていたが、
+      // 省略すれば初回だけ同意を求め、二回目以降は無操作で戻ってくる。
+      const authUrl = buildDriveAuthUrl(clientId, '');
 
       // 設定値を保存してからリダイレクト（戻ってきたとき復元できるように）
       saveSettings();
@@ -1840,7 +1926,9 @@
     // CORS ヘッダーが返らず fetch() が失敗する。
     // gapi.client はこの問題を内部で回避してくれる。
     // ============================================================
-    let gapiReady = false;
+    // var で宣言する: 起動時の復元処理（このコードより前）から参照されるため。
+    // let だと TDZ で ReferenceError になり、以降のスクリプトが止まる。
+    var gapiReady = false;
     function initGapi() {
       return new Promise((resolve) => {
         if (typeof gapi === 'undefined') { resolve(false); return; }
@@ -1870,7 +1958,8 @@
           params: { alt: 'media' }
         });
         // gapi の response.body はバイナリ文字列（1char=1byte）の場合と、
-        // iOS Safari など一部環境では既にデコード済み Unicode 文字列の場合がある。
+        // iOS（Safari / Chrome とも WebKit）など一部環境では
+        // 既にデコード済み Unicode 文字列の場合がある。
         // charCode > 255 の文字があれば既にデコード済みなのでそのまま返す。
         var raw = response.body;
         var alreadyDecoded = false;
@@ -5323,18 +5412,32 @@
     // OAuth コールバック処理（リダイレクト後にトークンを拾う）
     // ============================================================
     (function handleOAuthRedirect() {
-      if (window.location.hash.includes('access_token=')) {
-        const params = new URLSearchParams(window.location.hash.substring(1));
-        state.gdriveToken = params.get('access_token');
-        // gapi にもトークンをセット
-        if (gapiReady && gapi.client) gapi.client.setToken({ access_token: state.gdriveToken });
-        // ハッシュをクリア
+      const hash = window.location.hash || '';
+
+      if (hash.includes('access_token=')) {
+        const params = new URLSearchParams(hash.substring(1));
+        setDriveToken(params.get('access_token'), params.get('expires_in'));
         history.replaceState(null, '', window.location.pathname);
+        // 次回また自動リダイレクトを試せるようにガードを解除する
+        try { sessionStorage.removeItem(AUTO_AUTH_KEY); } catch (e) { /* 無視 */ }
         updateGdriveStatus(true);
         saveSettings();
         showToast('Google Drive に接続しました', 'success');
         loadGdriveFiles();
+        return;
       }
+
+      if (hash.includes('error=')) {
+        // prompt=none の自動接続が失敗（Google 未ログイン・同意未取得など）。
+        // ガードは残したままにして、リダイレクトのループを防ぐ。
+        history.replaceState(null, '', window.location.pathname);
+        updateGdriveStatus(false);
+        showToast('自動接続できませんでした。設定から Google Drive に接続してください', 'warning');
+        return;
+      }
+
+      // 通常起動 → 前回の状態から自動接続を試みる
+      bootstrapDriveAuth();
     })();
 
     // ============================================================
