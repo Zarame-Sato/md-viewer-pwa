@@ -259,9 +259,21 @@ PAT に有効期限がなければこれで恒久的に自動。「この端末�
 
 PDF と画像は Drive の `thumbnailLink` を使う。実体をダウンロードするより遥かに軽い。
 
+**3 段構えで取得する**（`buildThumbUrl`）。上から順に試し、取れた時点で終わる。
+
+| 段 | 手段 | 備考 |
+|---|---|---|
+| 1 | `thumbnailLink` を認証付き fetch | 最も軽い。ただし googleusercontent 側が CORS を返さないことがあり、失敗は想定内 |
+| 2 | 画像は実体を取って blob 化 | ビューアと同じ経路なので確実に通る |
+| 3 | PDF は pdf.js で 1 ページ目を描画 | canvas → JPEG blob。API の使い方は `renderPdf` と同じ |
+
+- 実体から作る場合は `THUMB_MAX_BYTES`（12MB）を超えたら諦める
+- `thumbCache` は **Promise** を保持する。同じファイルの二重取得を防ぐため
 - 一覧取得の `fields` に `thumbnailLink` を追加してある
-- `<img src>` に直接入れると 403 になるので、**認証付き fetch → blob URL** にする
-- URL 末尾のサイズ指定を `=s320` に付け替えて必要な分だけ取る
+
+> **注意**: 取得する `fields` を変えたら `FILE_CACHE_KEY` の版を上げること。
+> 上げないと古い形のキャッシュを 24 時間掴み続ける。実際、`thumbnailLink` を
+> 追加した際に版を上げ忘れ、サムネが一切出ない状態になった。
 - `IntersectionObserver` で画面に入ったものから読む。`thumbCache` に blob URL を保持し、
   失敗は `null` を入れて再試行しない（線画アイコンのまま）
 - `thumbnailLink` には有効期限があるため、localStorage のファイルキャッシュから

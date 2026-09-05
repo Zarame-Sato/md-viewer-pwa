@@ -1454,24 +1454,72 @@
     // --- サムネイル ---
     // Drive の thumbnailLink を使う。実体をダウンロードするより遥かに軽い。
     // 画像の <img src> に直接入れると 403 になるため、認証付き fetch → blob URL にする。
-    const thumbCache = new Map();   // fileId -> blob URL | null（null = 取得失敗、再試行しない）
+    // fileId -> Promise<blob URL | null>。Promise で持つことで同じファイルの二重取得を防ぐ
+    const thumbCache = new Map();
+    // 実体から作る場合の上限。これを超えるものはサムネのために落とさない
+    const THUMB_MAX_BYTES = 12 * 1024 * 1024;
 
-    async function loadThumbUrl(file) {
-      if (thumbCache.has(file.id)) return thumbCache.get(file.id);
-      if (!file.thumbnailLink || !state.gdriveToken) { thumbCache.set(file.id, null); return null; }
+    function loadThumbUrl(file) {
+      if (!thumbCache.has(file.id)) thumbCache.set(file.id, buildThumbUrl(file));
+      return thumbCache.get(file.id);
+    }
+
+    // 3 段構え。上から順に試して、取れた時点で終わる。
+    //   1. Drive の thumbnailLink（最も軽い。ただし CORS や失効で落ちることがある）
+    //   2. 画像なら実体を取って blob 化
+    //   3. PDF なら pdf.js で 1 ページ目だけ描いて画像化
+    async function buildThumbUrl(file) {
+      const type = getFileType(file.name);
+      const size = Number(file.size) || 0;
       try {
-        // =s220 などのサイズ指定を付け替えて必要な分だけ取る
+        const viaLink = await thumbFromDriveLink(file);
+        if (viaLink) return viaLink;
+        if (size > THUMB_MAX_BYTES) return null;
+        if (type === 'image') return await thumbFromImage(file);
+        if (type === 'pdf') return await thumbFromPdf(file);
+      } catch (e) { /* 線画アイコンのまま */ }
+      return null;
+    }
+
+    // 1. thumbnailLink を認証付きで取得する。
+    //    googleusercontent 側が CORS を返さないことがあるので、失敗は想定内。
+    async function thumbFromDriveLink(file) {
+      if (!file.thumbnailLink || !state.gdriveToken) return null;
+      try {
         const url = file.thumbnailLink.replace(/=s\d+(-[a-z]+)?$/i, '') + '=s320';
         const res = await fetch(url, { headers: { Authorization: 'Bearer ' + state.gdriveToken } });
-        if (!res.ok) throw new Error('thumb ' + res.status);
-        const obj = URL.createObjectURL(await res.blob());
-        thumbCache.set(file.id, obj);
-        return obj;
-      } catch (e) {
-        // 失効やサムネ未生成。線画アイコンのままにする
-        thumbCache.set(file.id, null);
-        return null;
-      }
+        if (!res.ok) return null;
+        return URL.createObjectURL(await res.blob());
+      } catch (e) { return null; }
+    }
+
+    // 2. 画像は実体を取って blob URL にする（ビューアと同じ経路なので確実に通る）
+    async function thumbFromImage(file) {
+      const bytes = await loadGdriveFileBytes(file.id);
+      return URL.createObjectURL(new Blob([bytes], { type: getFileMime(file.name) }));
+    }
+
+    // 3. PDF は pdf.js で 1 ページ目だけ描く
+    async function thumbFromPdf(file) {
+      await window.pdfjsReady;
+      if (!window.pdfjsLib) return null;
+      const bytes = await loadGdriveFileBytes(file.id);
+      // pdf.js は渡した ArrayBuffer を detach するのでコピーを渡す
+      const pdf = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
+      const page = await pdf.getPage(1);
+      const base = page.getViewport({ scale: 1 });
+      const scale = Math.min(2, 320 / Math.max(base.width, base.height));
+      const viewport = page.getViewport({ scale: scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+      const blob = await new Promise(function(res) { canvas.toBlob(res, 'image/jpeg', 0.75); });
+      pdf.destroy();
+      return blob ? URL.createObjectURL(blob) : null;
     }
 
     let thumbObserver = null;
@@ -2031,7 +2079,11 @@
     // ============================================================
     // ファイル一覧キャッシュ（localStorage）
     // ============================================================
-    const FILE_CACHE_KEY = 'mdviewer_file_cache';
+    // fields を変更したらキーの版を上げること。
+    // 上げないと、古い形（thumbnailLink 無しなど）のキャッシュを 24 時間掴み続ける。
+    const FILE_CACHE_KEY = 'mdviewer_file_cache_v2';
+    // 旧版のキャッシュは二度と読まないので消しておく（localStorage の容量を空ける）
+    try { localStorage.removeItem('mdviewer_file_cache'); } catch (e) { /* 無視 */ }
 
     function saveFileCache(files) {
       try {
@@ -3812,7 +3864,6 @@
     function thumbAttr(file, index) {
       var t = getFileType(file.name);
       if (t !== 'pdf' && t !== 'image') return '';
-      if (!file.thumbnailLink) return '';
       return ' data-thumb-index="' + index + '"';
     }
 
