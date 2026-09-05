@@ -157,34 +157,65 @@
       overflow: hidden;
     }
 
-    /* ビューアページ表示時: bodyスクロールに切り替え（アドレスバー折りたたみ対応） */
-    body.viewer-mode { overflow-y: auto; -webkit-overflow-scrolling: touch; }
-    body.viewer-mode #app { height: auto; min-height: 100%; }
-    body.viewer-mode main { overflow: visible; }
+    /* document 自体をスクロールさせるモード。
+       中の箱だけを動かすと Safari は「スクロールしていない」と判断し、
+       アドレスバーを畳んでくれない。表示領域を稼ぐため両ページで使う。 */
+    /* document 自体を伸ばしてビューポートにスクロールさせるモード。
+       既定の html,body は height:100% + overflow:hidden で「中の箱だけが動く」形。
+       それだと Safari は「ページはスクロールしていない」と見なし、
+       アドレスバーを畳んでくれず、position:sticky も効かない。
+       html 側にもクラスを付けないと overflow:hidden が残って document が動かない。 */
+    html.scroll-mode, html.scroll-mode body {
+      height: auto;
+      min-height: 100%;
+      overflow: visible;
+    }
+    body.viewer-mode #app, body.files-mode #app { height: auto; min-height: 100%; }
+    body.viewer-mode main, body.files-mode main { overflow: visible; }
     body.viewer-mode #page-viewer {
       position: relative;
       overflow-y: visible;
       padding-bottom: calc(70px + var(--safe-bottom));
     }
-    body.viewer-mode header {
-      position: sticky;
-      top: 0;
-      z-index: 100;
-    }
-    /* ファイルタブ＋ボタン行をヘッダー直下に固定（スクロールしても消えない） */
+    /* ビューアではアプリ名のバーを出さない。
+       戻るボタンとファイル名は下の行にあり、同期ボタンは一覧でしか使わないため、
+       読書中は 46px まるごと無駄になっていた。 */
+    body.viewer-mode header { display: none; }
+    /* ファイルタブ＋ボタン行を画面上部に固定（スクロールしても消えない） */
     body.viewer-mode .viewer-sticky-header {
       position: sticky;
-      top: 56px; /* headerのmin-height分 */
+      top: 0;
       z-index: 90;
       background: var(--bg);
     }
-    body.viewer-mode nav {
+    body.viewer-mode nav, body.files-mode nav {
       position: fixed;
       bottom: 0;
       left: 0;
       right: 0;
       z-index: 100;
       padding-bottom: var(--safe-bottom);
+    }
+
+    /* 一覧ページも document スクロールにする */
+    body.files-mode #page-files {
+      position: relative;
+      overflow-y: visible;
+      padding-bottom: calc(70px + var(--safe-bottom));
+    }
+    body.files-mode header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    /* 検索欄と表示切替は貼り付ける。一緒に流れると探せなくなるため */
+    body.files-mode .files-toolbar {
+      position: sticky;
+      top: 46px; /* header の min-height 分 */
+      z-index: 90;
+      background: var(--bg);
+      margin: 0 -16px;
+      padding: 10px 16px;
     }
 
 
@@ -204,12 +235,12 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 20px;
+      padding: 7px 16px;
       background: var(--bg-surface);
       -webkit-backdrop-filter: var(--glass);
       backdrop-filter: var(--glass);
       border-bottom: 1px solid var(--border);
-      min-height: 56px;
+      min-height: 46px;
       flex-shrink: 0;
     }
     header h1 {
@@ -585,8 +616,8 @@
     .viewer-header {
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 12px 0;
+      gap: 8px;
+      padding: 7px 0;
       border-bottom: 1px solid var(--border);
       flex-wrap: wrap;
       background: var(--bg);
@@ -905,7 +936,7 @@
       border-bottom: 1px solid var(--border);
       -webkit-overflow-scrolling: touch;
       scrollbar-width: none;
-      padding: 4px 4px 0;
+      padding: 3px 4px 0;
       gap: 2px;
     }
     .file-tabs::-webkit-scrollbar { display: none; }
@@ -913,10 +944,10 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 8px 14px;
+      padding: 6px 12px;
       font-size: 12px;
       color: var(--text-muted);
-      border-radius: 10px 10px 0 0;
+      border-radius: 8px 8px 0 0;
       cursor: pointer;
       white-space: nowrap;
       flex-shrink: 0;
@@ -1900,6 +1931,10 @@
     // ページ切替
     // ============================================================
     function showPage(name) {
+      // ページを隠す前に読むこと。隠した後だと document が縮んで scrollY が 0 になる
+      if (document.body.classList.contains('files-mode')) {
+        filesScrollY = window.scrollY || window.pageYOffset || 0;
+      }
       exitHtmlPreviewFullscreen();
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       document.getElementById('page-' + name).classList.add('active');
@@ -1912,15 +1947,24 @@
         document.getElementById('nav-files').classList.add('active');
       }
 
-      // ビューアページ表示時はbodyスクロールに切り替え（アドレスバー折りたたみ対応）
-      if (name === 'viewer') {
-        document.body.classList.add('viewer-mode');
+      // document 自体をスクロールさせるモードに切り替える。
+      // これがないと Safari がアドレスバーを畳んでくれない。
+      document.body.classList.toggle('viewer-mode', name === 'viewer');
+      document.body.classList.toggle('files-mode', name === 'files');
+      // overflow:hidden は html にも掛かっているので、そちらにも付ける
+      document.documentElement.classList.toggle('scroll-mode', name === 'viewer' || name === 'files');
+
+      if (name === 'files') {
+        // レイアウトが確定してからでないと届かない。1 フレームでは足りないことがある
+        var restore = function() { window.scrollTo(0, filesScrollY); };
+        requestAnimationFrame(function() { restore(); requestAnimationFrame(restore); });
       } else {
-        document.body.classList.remove('viewer-mode');
-        // ページ切り替え時にbodyのスクロール位置をリセット
         window.scrollTo(0, 0);
       }
     }
+
+    // 一覧の最後のスクロール位置（ファイルを開いて戻ったときに元の場所に戻すため）
+    var filesScrollY = 0;
 
     // ============================================================
     // 通知表示
@@ -5897,6 +5941,9 @@
     mermaid.initialize({ startOnLoad: false, theme: 'dark' });
 
     // 初期表示
+    // showPage を通しておかないと files-mode が付かず、初回だけ
+    // document スクロールにならない（＝アドレスバーが畳まれない）
+    showPage('files');
     renderFileList();
   </script>
 </body>

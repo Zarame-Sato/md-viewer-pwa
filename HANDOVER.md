@@ -340,6 +340,47 @@ PDF と画像は Drive の `thumbnailLink` を使う。実体をダウンロー�
 
 ---
 
+## 4.8 スクロールの仕組み（アドレスバーを畳ませる）
+
+既定の `html, body` は `height:100%` + `overflow:hidden` で、**中の箱（`.page`）だけが動く**
+アプリ風レイアウト。この状態では Safari は「ページはスクロールしていない」と見なすため、
+**アドレスバーを畳んでくれず、`position:sticky` も効かない**。
+
+一覧とビューアでは `<html>` に `scroll-mode` を付けて document 自体を伸ばす。
+
+```css
+html.scroll-mode, html.scroll-mode body {
+  height: auto; min-height: 100%; overflow: visible;
+}
+```
+
+> **注意（実際に踏んだ順）**
+> 1. `body` にだけ `overflow-y:auto` を付けても駄目。`html` の `overflow:hidden` が
+>    残って document が動かない。**クラスは `<html>` にも付けること**
+> 2. `body` の `height:100%` を残すと body 自身が内部スクロールし、document は伸びない
+> 3. `overflow-y` だけ変えると `overflow-x:hidden` が残り、body が
+>    スクロールコンテナ扱いになって `sticky` が効かない。`overflow: visible` にすること
+
+`body.files-mode` / `body.viewer-mode` は、それ以外（`#app` の高さ、`main` の overflow、
+sticky ヘッダー、`nav` の固定）に使う。
+
+### 一覧のスクロール位置の復元
+
+`filesScrollY` に覚えて、戻ったときに復元する。
+
+> **注意**: 保存は `showPage()` の**先頭**で行うこと。ページを `display:none` にした後だと
+> document が縮んで `window.scrollY` が 0 になり、必ず 0 が保存される（実際に踏んだ）。
+> 復元は `requestAnimationFrame` を 2 回重ねる。1 フレームではレイアウトが間に合わない。
+
+### ビューアの上部を詰めてある
+
+ビューアでは `header`（アプリ名 + 同期ボタン）を `display:none` にしている。
+戻るボタンとファイル名は下の行にあり、同期ボタンは一覧でしか使わないため、
+読書中は 46px まるごと無駄だった。`.viewer-sticky-header` の `top` も 0 にしてある
+（header を出す場合は `top` を戻すこと）。
+
+---
+
 ## 5. 未着手・今後の検討事項
 
 > 以下は前回セッション時点で話題に上がっていた、または改善余地のある項目。
