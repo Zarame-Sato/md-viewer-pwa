@@ -4799,16 +4799,16 @@
       addButton('◀', '前のページに戻る', htmlPreviewGoBack, backLen === 0);
       addButton('▶', '次のページに進む', htmlPreviewGoForward, fwdLen === 0);
 
+      // ファイル名はビューアヘッダーとタブに既に出ているので、ここでは出さない。
+      // 伝えることがあるとき（未解決の参照）だけ表示する。
       var info = document.createElement('span');
       info.className = 'html-preview-info';
-      var msg = (pageFile && pageFile.name) ? pageFile.name : 'ブラウザ表示';
       if (missing && missing.length) {
-        msg += ' ・ 未解決 ' + missing.length + ' 件';
+        info.textContent = '未解決 ' + missing.length + ' 件';
+        info.title = (pageFile && (pageFile.drivePath || pageFile.name) || '') +
+          (resolvedCount ? '\n関連ファイル ' + resolvedCount + ' 件を埋め込み済み' : '') +
+          '\nDrive 上で見つからなかった参照:\n' + missing.join('\n');
       }
-      info.textContent = msg;
-      info.title = (pageFile && (pageFile.drivePath || pageFile.name) || '') +
-        (resolvedCount ? '\n関連ファイル ' + resolvedCount + ' 件を埋め込み済み' : '') +
-        ((missing && missing.length) ? '\nDrive 上で見つからなかった参照:\n' + missing.join('\n') : '');
       bar.appendChild(info);
 
       var frame = document.createElement('iframe');
@@ -4821,18 +4821,6 @@
       addButton('⟳', '再読込', function() {
         frame.srcdoc = '';
         frame.srcdoc = html;
-      });
-
-      addButton('↗', '別タブで開く', function() {
-        try {
-          var blob = new Blob([html], { type: 'text/html' });
-          var url = URL.createObjectURL(blob);
-          var w = window.open(url, '_blank');
-          if (!w) showToast('ポップアップがブロックされました', 'error');
-          setTimeout(function() { URL.revokeObjectURL(url); }, 60000);
-        } catch (e) {
-          showToast('別タブで開けませんでした: ' + e.message, 'error');
-        }
       });
 
       var fsBtn = addButton('⛶', '全画面表示', function() {
