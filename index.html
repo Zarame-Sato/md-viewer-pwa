@@ -1070,6 +1070,9 @@
       border-radius: 0;
     }
     .html-preview-wrap.fullscreen .html-preview-bar {
+      /* 全画面ではビューアのヘッダーが無いので、sticky のオフセットを 0 に戻す。
+         通常時の top（ヘッダーの高さ分）を残すと、その分だけ上に空白が居座る */
+      top: 0;
       padding-top: calc(6px + var(--safe-top, 0px));
     }
     .html-preview-wrap.fullscreen .html-preview-frame {

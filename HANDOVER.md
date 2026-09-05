@@ -192,6 +192,11 @@ sandbox に `allow-same-origin` がないので origin は `"null"` になり、
 >   ヘッダーは端末幅やボタンの折り返しで高さが変わるため決め打ちにしない
 > - 全画面では iframe 自身がスクロールするので、高さ合わせは解除する
 >   （戻すときは `wrap.dataset.contentH` から復帰する）
+> - **全画面のときは `--viewer-header-h` 分の `top` を 0 に戻すこと。**
+>   全画面ではビューアのヘッダーが `display:none` になるのに、ツールバーの
+>   `position: sticky; top: var(--viewer-header-h)` はそのままなので、
+>   ツールバーの上に 130px 前後の空白が居座る（`.html-preview-wrap.fullscreen
+>   .html-preview-bar { top: 0 }` で解消）
 
 ### セキュリティ
 
