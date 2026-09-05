@@ -1340,7 +1340,8 @@
           } else {
             state.gdriveToken = null;
             updateGdriveStatus(false);
-            // iframe が塞がれている環境（iOS Safari の Cookie 制限など）向けの最終手段。
+            // iframe 内の Cookie が塞がれている環境向けの最終手段。
+            // iOS は Chrome も中身が WebKit なので、ブラウザを問わず同じ制限を受ける。
             // トップレベル遷移なら Google の Cookie が一次パーティ扱いになるので通る。
             if (!tryAutoRedirectAuth()) {
               showToast('Google Drive のセッションが切れました。設定から再接続してください', 'warning');
@@ -1395,8 +1396,9 @@
 
     // ============================================================
     // Google Drive トークンのサイレント再取得
-    // hidden iframe + prompt=none で、ユーザー操作なしにトークンを更新する
-    // Googleにログイン済みなら自動成功、未ログインなら失敗→自動リダイレクトへ
+    // hidden iframe + prompt=none で、ユーザー操作なしにトークンを更新する。
+    // サードパーティ Cookie が塞がれていると失敗するので、成否は当てにせず
+    // 失敗時は tryAutoRedirectAuth() に落とす前提で使うこと。
     // ============================================================
     function silentRefreshDriveToken() {
       return new Promise((resolve) => {
@@ -1457,6 +1459,8 @@
     const AUTO_AUTH_KEY = 'mdviewer_auto_auth_tried';
 
     // prompt=none のトップレベル遷移で無操作の再認証を試す。
+    // hidden iframe が Cookie 制限で失敗する環境（iOS は Chrome も WebKit なので
+    // ブラウザを問わず該当）でも、トップレベルなら一次パーティ Cookie が使える。
     // Google にログイン済みなら一瞬遷移して戻ってくるだけ。未ログインなら
     // error= 付きで戻るので、1 セッション 1 回に制限してループを防ぐ。
     function tryAutoRedirectAuth() {
@@ -1954,7 +1958,8 @@
           params: { alt: 'media' }
         });
         // gapi の response.body はバイナリ文字列（1char=1byte）の場合と、
-        // iOS Safari など一部環境では既にデコード済み Unicode 文字列の場合がある。
+        // iOS（Safari / Chrome とも WebKit）など一部環境では
+        // 既にデコード済み Unicode 文字列の場合がある。
         // charCode > 255 の文字があれば既にデコード済みなのでそのまま返す。
         var raw = response.body;
         var alreadyDecoded = false;

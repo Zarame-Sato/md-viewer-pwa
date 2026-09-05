@@ -203,14 +203,18 @@ PAT に有効期限がなければこれで恒久的に自動。「この端末�
 | 段階 | 手段 | 備考 |
 |---|---|---|
 | 1 | 保存トークンをそのまま使う | `gdriveTokenExpiry` が期限内のときだけ |
-| 2 | hidden iframe + `prompt=none` | `silentRefreshDriveToken()`。Cookie 制限のある環境では失敗する |
-| 3 | **トップレベル遷移 + `prompt=none`** | `tryAutoRedirectAuth()`。一次パーティ Cookie が使えるので iOS Safari でも通る |
+| 2 | hidden iframe + `prompt=none` | `silentRefreshDriveToken()`。サードパーティ Cookie が塞がれていると失敗する |
+| 3 | **トップレベル遷移 + `prompt=none`** | `tryAutoRedirectAuth()`。一次パーティ Cookie が使えるので通る |
 | 4 | 手動接続の案内 | Google 自体からログアウトしている場合はここに落ちる |
 
 - 有効期限は `expires_in` から **5 分早める**（期限ギリギリのリクエスト失敗を防ぐ）
 - `visibilitychange` で復帰時に期限切れなら黙って取り直す
 - 手動接続の `prompt=consent` を**削除**した。これが「毎回同意画面が出る」原因。
   省略すれば初回だけ同意を求め、以降は無操作で戻る
+
+> **注意**: 段階 2 が失敗するのは Safari だけの話ではない。iOS は Chrome を含む
+> すべてのブラウザが WebKit を使うため、iPhone では**ブラウザを問わず**同じ制限を受ける。
+> 「Chrome だから段階 3 は不要」と判断して消さないこと。
 
 ### リダイレクトのループ防止
 
