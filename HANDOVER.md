@@ -174,6 +174,25 @@ iframe に注入したシムが相対リンクのクリックを横取りし、`
 親側の `message` リスナーは `ev.source !== frame.contentWindow` を弾く。
 sandbox に `allow-same-origin` がないので origin は `"null"` になり、origin 比較は使えない。
 
+### iframe は中身の高さまで伸ばす
+
+`applyPreviewAutoHeight()` が iframe を中身の高さに合わせる。合わせないと
+**iframe の中だけがスクロールしてページ本体が動かず、アドレスバーが畳まれない**。
+シム側が `__folioHeight` を postMessage で送り、親が受けて `frame.style.height` を設定する。
+
+> **注意**
+> - `100vh` を使うページは「iframe を伸ばす → vh が増える → さらに伸びる」と
+>   際限なく育ちうる。`wrap.dataset.autoFit` で調整回数に上限（4回）を掛けている
+> - 伸ばすと iframe 内にスクロール余地が無くなり、**`scrollIntoView` が効かなくなる**。
+>   アンカー（`#id`）はシムが位置を `__folioScrollTo` で送り、
+>   親が `scrollPreviewTo()` でページ本体を動かす
+> - `.html-preview-wrap` に `overflow: hidden` を付けてはいけない。
+>   中の `.html-preview-bar` の `position: sticky` が効かなくなる
+> - ツールバーの貼り付け位置はヘッダーの実測値（`--viewer-header-h`）を使う。
+>   ヘッダーは端末幅やボタンの折り返しで高さが変わるため決め打ちにしない
+> - 全画面では iframe 自身がスクロールするので、高さ合わせは解除する
+>   （戻すときは `wrap.dataset.contentH` から復帰する）
+
 ### セキュリティ
 
 `sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-forms allow-downloads"`。

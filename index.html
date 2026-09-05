@@ -1011,11 +1011,15 @@
       min-height: 280px;
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      overflow: hidden;
+      /* overflow:hidden は付けない。付けると中の .html-preview-bar の
+         position:sticky が効かなくなる（クリップする祖先になるため） */
       background: #fff;
       margin: 8px 0;
     }
     .html-preview-bar {
+      position: sticky;
+      top: var(--viewer-header-h, 52px);
+      z-index: 5;
       display: flex;
       align-items: center;
       gap: 6px;
@@ -4451,6 +4455,13 @@
         '    var el = null;',
         '    try { el = document.getElementById(id) || document.getElementsByName(id)[0]; } catch (e) {}',
         '    if (!el) return false;',
+        '    // 親が iframe を中身の高さまで伸ばしていると、ここにスクロール余地が',
+        '    // 無いので scrollIntoView は効かない。位置を渡して親に動いてもらう。',
+        '    try {',
+        '      var y = el.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0);',
+        '      parent.postMessage({ __folioScrollTo: y }, "*");',
+        '    } catch (e) {}',
+        '    // 全画面など iframe 自身がスクロールできるときはこちらが効く',
         '    try { el.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) { el.scrollIntoView(); }',
         '    return true;',
         '  }',
@@ -4475,6 +4486,27 @@
         '    try { parent.postMessage({ __folioNav: true, href: href }, "*"); } catch (err) {}',
         '  }, true);',
         '',
+        '  // --- ④ 中身の高さを親に伝える ---',
+        '  // iframe を中身の高さまで伸ばしてもらう。伸ばさないと iframe の中だけが',
+        '  // スクロールし、ページ本体が動かないのでアドレスバーが畳まれない。',
+        '  var lastH = 0;',
+        '  function reportHeight(){',
+        '    var h = Math.max(',
+        '      document.documentElement ? document.documentElement.scrollHeight : 0,',
+        '      document.body ? document.body.scrollHeight : 0);',
+        '    if (!h || Math.abs(h - lastH) < 8) return;',
+        '    lastH = h;',
+        '    try { parent.postMessage({ __folioHeight: h }, "*"); } catch (e) {}',
+        '  }',
+        '  if (document.readyState === "complete") reportHeight();',
+        '  window.addEventListener("load", reportHeight);',
+        '  [100, 400, 1200].forEach(function(t){ setTimeout(reportHeight, t); });',
+        '  try {',
+        '    if (window.ResizeObserver && document.documentElement) {',
+        '      new ResizeObserver(reportHeight).observe(document.documentElement);',
+        '    }',
+        '  } catch (e) {}',
+        '',
         '  // --- ③ 遷移直後のハッシュへスクロール ---',
         '  if (HASH) {',
         '    var go = function(){ if (!scrollToId(HASH)) setTimeout(function(){ scrollToId(HASH); }, 300); };',
@@ -4491,6 +4523,8 @@
     function sizeHtmlPreview(wrap) {
       wrap = wrap || document.querySelector('.html-preview-wrap');
       if (!wrap || wrap.classList.contains('fullscreen')) return;
+      // 中身の高さに合わせ済みなら、画面高に切り詰めない
+      if (Number(wrap.dataset.autoFit || 0) > 0) return;
       wrap.style.height = '';
       var docTop = wrap.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0);
       var nav = document.querySelector('nav');
@@ -4498,7 +4532,16 @@
       var h = window.innerHeight - docTop - navH - 8;
       wrap.style.height = Math.max(280, Math.round(h)) + 'px';
     }
-    window.addEventListener('resize', function() { sizeHtmlPreview(); });
+    // プレビューのツールバーを貼り付ける位置。ヘッダーは端末幅やボタンの
+    // 折り返しで高さが変わるので、決め打ちにせず実測する。
+    function syncViewerHeaderHeight() {
+      var sh = document.querySelector('.viewer-sticky-header');
+      if (!sh) return;
+      var h = Math.round(sh.getBoundingClientRect().height);
+      if (h > 0) document.documentElement.style.setProperty('--viewer-header-h', h + 'px');
+    }
+
+    window.addEventListener('resize', function() { syncViewerHeaderHeight(); sizeHtmlPreview(); });
     window.addEventListener('orientationchange', function() {
       setTimeout(function() { sizeHtmlPreview(); }, 300);
     });
@@ -4827,7 +4870,19 @@
         fsBtn.textContent = on ? '✕' : '⛶';
         fsBtn.title = on ? '全画面を閉じる' : '全画面表示';
         document.body.style.overflow = on ? 'hidden' : '';
-        if (on) wrap.style.height = ''; else sizeHtmlPreview(wrap);
+        if (on) {
+          // 全画面では画面いっぱい。中身の高さ合わせは一旦解除する
+          wrap.style.height = '';
+          frame.style.height = '';
+          frame.style.flex = '';
+          delete wrap.dataset.autoFit;
+        } else if (wrap.dataset.contentH) {
+          // 全画面に入る前の高さに戻す。iframe の幅が変わらないと
+          // ResizeObserver が鳴らず、再通知が来ないことがあるため
+          applyPreviewAutoHeight(frame, Number(wrap.dataset.contentH));
+        } else {
+          sizeHtmlPreview(wrap);
+        }
       });
 
       wrap.appendChild(bar);
@@ -4836,6 +4891,7 @@
 
       // iframe を DOM に入れてから srcdoc を設定する（Safari で描画が抜けるのを防ぐ）
       frame.srcdoc = html;
+      syncViewerHeaderHeight();
       sizeHtmlPreview(wrap);
     }
 
@@ -4955,15 +5011,63 @@
       htmlPreviewShowPage(next.file, next.content, '');
     }
 
-    // iframe からのリンククリック通知を受ける（allow-same-origin なしなので
-    // origin は "null" になる。送信元 window の一致で検証する）
+    // iframe からの通知を受ける（allow-same-origin なしなので origin は "null"。
+    // 送信元 window の一致で検証する）
     window.addEventListener('message', function(ev) {
       var d = ev.data;
-      if (!d || d.__folioNav !== true || typeof d.href !== 'string') return;
+      if (!d) return;
       var frame = document.querySelector('.html-preview-frame');
       if (!frame || ev.source !== frame.contentWindow) return;
-      htmlPreviewNavigate(d.href);
+
+      if (d.__folioNav === true && typeof d.href === 'string') {
+        htmlPreviewNavigate(d.href);
+        return;
+      }
+      if (typeof d.__folioHeight === 'number') {
+        applyPreviewAutoHeight(frame, d.__folioHeight);
+        return;
+      }
+      if (typeof d.__folioScrollTo === 'number') {
+        scrollPreviewTo(frame, d.__folioScrollTo);
+      }
     });
+
+    // iframe 内の位置までページ本体をスクロールする。
+    // 貼り付いているヘッダーとツールバーの下に来るよう、その分ずらす。
+    function scrollPreviewTo(frame, yInFrame) {
+      var wrap = frame.parentElement;
+      if (wrap && wrap.classList.contains('fullscreen')) return; // iframe 内で完結する
+      var frameTop = frame.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0);
+      var headerH = parseFloat(getComputedStyle(document.documentElement)
+        .getPropertyValue('--viewer-header-h')) || 52;
+      var bar = wrap ? wrap.querySelector('.html-preview-bar') : null;
+      var barH = bar ? bar.getBoundingClientRect().height : 0;
+      var top = Math.max(0, frameTop + yInFrame - headerH - barH - 8);
+      try { window.scrollTo({ top: top, behavior: 'smooth' }); }
+      catch (e) { window.scrollTo(0, top); }
+    }
+
+    // iframe を中身の高さまで伸ばし、ページ本体をスクロールさせる。
+    // これをやらないと iframe の中だけが動き、Safari はアドレスバーを畳まない。
+    //
+    // 100vh などを使うページでは「iframe を伸ばす → vh が増える → さらに伸びる」と
+    // 際限なく育ちうるので、調整回数に上限を設けて止める。
+    function applyPreviewAutoHeight(frame, contentHeight) {
+      var wrap = frame.parentElement;
+      if (!wrap || wrap.classList.contains('fullscreen')) return;
+
+      var tries = Number(wrap.dataset.autoFit || 0);
+      if (tries > 4) return;
+
+      var target = Math.min(Math.max(contentHeight, 320), 60000);
+      if (Math.abs(target - frame.getBoundingClientRect().height) < 12) return;
+
+      wrap.dataset.autoFit = String(tries + 1);
+      wrap.dataset.contentH = String(target);   // 全画面から戻ったときの復帰用
+      wrap.style.height = 'auto';
+      frame.style.flex = 'none';
+      frame.style.height = target + 'px';
+    }
 
     // ============================================================
     // ファイルタイプ別レンダリング振り分け
