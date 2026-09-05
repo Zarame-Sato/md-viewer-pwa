@@ -756,7 +756,9 @@
     /* ===== タイル表示 ===== */
     .file-list.view-tile {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      /* min() で下限も掛ける。単純な minmax(170px,1fr) だと iPhone SE 幅で
+         1 列に落ちて巨大タイルになるため、狭いときは必ず 2 列を保つ */
+      grid-template-columns: repeat(auto-fill, minmax(min(170px, 46%), 1fr));
     }
     .file-list.view-tile .file-item,
     .file-list.view-tile .folder-item {
@@ -767,14 +769,21 @@
       gap: 10px;
       border-right: 1px solid var(--border);
     }
-    .file-list.view-tile > *:nth-child(2n) { border-right: 0; }
+    /* 列数が可変なので nth-child では最終列を狙えない。
+       右線は全部に引き、はみ出しは .file-list の overflow:hidden で切る */
+    .file-list.view-tile { margin-right: -1px; }
     .file-list.view-tile .file-icon,
     .file-list.view-tile .folder-icon {
-      width: 72px; height: 72px;
+      /* 縦長にする。中身は PDF や書類が多く、A4 は 1:1.41 の縦長。
+         横長の枠だと contain で縮んで左右が余白だらけになる */
+      width: 100%;
+      height: auto;
+      aspect-ratio: 3 / 4;
+      max-height: 240px;
       margin: 0;
     }
     .file-list.view-tile .file-icon svg,
-    .file-list.view-tile .folder-icon svg { width: 44px; height: 44px; }
+    .file-list.view-tile .folder-icon svg { width: 46px; height: 46px; }
     .file-list.view-tile .file-info,
     .file-list.view-tile .folder-name { width: 100%; text-align: center; }
     .file-list.view-tile .file-name,
@@ -1486,7 +1495,7 @@
     async function thumbFromDriveLink(file) {
       if (!file.thumbnailLink || !state.gdriveToken) return null;
       try {
-        const url = file.thumbnailLink.replace(/=s\d+(-[a-z]+)?$/i, '') + '=s320';
+        const url = file.thumbnailLink.replace(/=s\d+(-[a-z]+)?$/i, '') + '=s512';
         const res = await fetch(url, { headers: { Authorization: 'Bearer ' + state.gdriveToken } });
         if (!res.ok) return null;
         return URL.createObjectURL(await res.blob());
@@ -1508,7 +1517,7 @@
       const pdf = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
       const page = await pdf.getPage(1);
       const base = page.getViewport({ scale: 1 });
-      const scale = Math.min(2, 320 / Math.max(base.width, base.height));
+      const scale = Math.min(2.5, 512 / Math.max(base.width, base.height));
       const viewport = page.getViewport({ scale: scale });
       const canvas = document.createElement('canvas');
       canvas.width = Math.ceil(viewport.width);
